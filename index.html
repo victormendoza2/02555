@@ -181,7 +181,7 @@
   let inputPolygonFeature = null; // GeoJSON polygon (lon/lat order), with property area_ha
 
   // ---------- tabla de propietarios (csv) ----------
-  // formato: cod_predio (texto, puede tener ceros delante) -> nombre
+  // formato: num_predio (texto, puede tener ceros delante) -> nombre
   let propietariosMap = {}; // exactKey -> name
   let propietariosAlternateKeys = {}; // key without leading zeros -> name (if needed)
 
@@ -378,7 +378,7 @@
           const id = props.OBJECTID || props.ID || props.OBJECTID_1 || props.oid || "-";
           const area_ha = props.AREA ? (Number(props.AREA)/10000).toFixed(3) : (turf.area(f)/10000).toFixed(3);
           let popup = `<div style="font-size:13px"><b>Predio Rural</b><br><b>ID:</b> ${id}<br><b>Área (ha):</b> ${area_ha}<br>`;
-          const extras = ['DEPARTAMEN','DEPARTAMENTO','PROVINCIA','DISTRITO','NOMBRE','CODIGO','TITULAR','PROPietario','PROPIETARI','cod_predio','COD_PREDIO','COD'];
+          const extras = ['DEPARTAMEN','DEPARTAMENTO','PROVINCIA','DISTRITO','NOMBRE','CODIGO','TITULAR','PROPietario','PROPIETARI','num_predio','NUM_PREDIO','NUM'];
           extras.forEach(k => { if(props[k]) popup += `<b>${k}:</b> ${props[k]}<br>`; });
           popup += `</div>`;
           layer.bindPopup(popup);
@@ -414,7 +414,7 @@
   function collectCandidateKeysFromFeature(props){
     const keys = [];
     // common property names that may hold the codigo
-    const possible = ['cod_predio','COD_PREDIO','NUM','CODIGO','COD','COD_PREDIO','CODIGO_PRED','COD_PREDIO','codigo','codigo_predio','nro','NRO'];
+    const possible = ['num_predio','NUM_PREDIO','NUM','CODIGO','COD','COD_PREDIO','CODIGO_PRED','COD_PREDIO','codigo','codigo_predio','nro','NRO'];
     possible.forEach(k => { if(props[k]) keys.push(String(props[k])); });
     // also include any property that looks like a numeric code
     Object.keys(props||{}).forEach(k=>{
@@ -604,11 +604,11 @@
         propietariosMap = {};
         propietariosAlternateKeys = {};
         rows.forEach(row=>{
-          // normalize column names: look for nombre and cod_predio (case-insensitive)
+          // normalize column names: look for nombre and num_predio (case-insensitive)
           const lc = {};
           Object.keys(row).forEach(k => lc[k.trim().toLowerCase()] = row[k]);
           const nombre = lc['nombre'] ?? lc['name'] ?? lc['titular'] ?? lc['titular_nombre'] ?? row[Object.keys(row)[0]];
-          const num = lc['cod_predio'] ?? lc['num'] ?? lc['numpredio'] ?? lc['nro'] ?? row[Object.keys(row)[1]];
+          const num = lc['num_predio'] ?? lc['num'] ?? lc['numpredio'] ?? lc['nro'] ?? row[Object.keys(row)[1]];
           if(!num || !nombre) return;
           const raw = String(num).trim();
           const nm = String(nombre).trim();
@@ -633,7 +633,7 @@
 
   // If automatic fetch fails, allow user to upload propietarios.csv
   function setupPropietariosUploadFallback(){
-    // Reuse same file input: user can upload propietarios CSV; we detect headers 'cod_predio' and 'nombre'
+    // Reuse same file input: user can upload propietarios CSV; we detect headers 'num_predio' and 'nombre'
     document.getElementById('file-input').addEventListener('change', function(e){
       const file = e.target.files[0];
       if(!file) return;
@@ -646,7 +646,7 @@
             const lc = {};
             Object.keys(row).forEach(k => lc[k.trim().toLowerCase()] = row[k]);
             const nombre = lc['nombre'] ?? lc['name'] ?? row[Object.keys(row)[0]];
-            const num = lc['cod_predio'] ?? lc['num'] ?? row[Object.keys(row)[1]];
+            const num = lc['num_predio'] ?? lc['num'] ?? row[Object.keys(row)[1]];
             if(!num || !nombre) return;
             propietariosMap[String(num).trim()] = String(nombre).trim();
             const digits = String(num).replace(/\D/g,'');
