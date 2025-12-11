@@ -1,111 +1,342 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-<meta charset="UTF-8" />
-<title>Catastro Rural - Etiquetado por COD_PREDIO</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<meta charset="utf-8" />
+<title>Registro Plantaciones Forestales BPS — Con Titulares</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<!-- Leaflet esri -->
-<script src="https://unpkg.com/esri-leaflet"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
 
 <style>
-    #map {
-        width: 100%;
-        height: 95vh;
-    }
+html, body { height:100%; margin:0; font-family: Arial, sans-serif; }
+body { display:flex; }
 
-    .label-predio {
-        background: rgba(255,255,255,0.85);
-        border: 1px solid #333;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-size: 12px;
-        font-weight: bold;
-        color: #000;
-    }
+/* PANEL */
+#panel {
+  width: 360px; min-width: 300px; background: #f7f7f7;
+  display:flex; flex-direction:column; border-right:1px solid #e6e6e6;
+  padding-bottom:8px; box-sizing:border-box;
+}
+
+/* HEADER */
+header { background: linear-gradient(90deg,#0b6b2b,#008000);
+  color:white; padding:12px; box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+}
+header h1 { margin:0; font-size:15px; }
+header p { margin:6px 0 0 0; font-size:12px; }
+
+/* TOOLBAR */
+.toolbar { display:flex; gap:6px; padding:10px; background:#fff;
+  border-bottom:1px solid #e6e6e6; flex-wrap:wrap;
+}
+.toolbar button {
+  background:white; border:1px solid #d0d0d0; padding:8px 10px;
+  border-radius:8px; cursor:pointer; display:flex; gap:6px;
+  font-size:13px; align-items:center;
+}
+.toolbar button.primary { background:#0b6b2b; color:white; }
+
+/* BOXES */
+.infoBox { background:#fff; padding:8px 10px; border-radius:8px;
+  box-shadow:0 1px 3px rgba(0,0,0,0.06); font-size:13px;
+}
+.small { font-size:12px; color:#444; }
+
+#map { flex:1; height:100vh; }
+
+/* Etiquetas sobre predios */
+.etiqueta-predio {
+  background: rgba(255,255,255,0.95);
+  border: 1px solid rgba(0,0,0,0.45);
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius:4px;
+  white-space: nowrap;
+  pointer-events:none;
+}
+
+/* Mensaje superior */
+#status-msg {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  background: rgba(11,107,43,0.95); color: white; padding: 8px 16px;
+  border-radius:20px; font-size:13px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  opacity:0; transition: opacity 0.35s ease-in-out; z-index:99999;
+}
+#status-msg.show { opacity:1; }
+
+/* Tabla */
+#results { padding:10px; overflow:auto; max-height:40vh; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th,td { border:1px solid #e6e6e6; padding:6px; text-align:left; }
+th { background:#f0f0f0; font-weight:700; }
+
 </style>
 </head>
+
 <body>
 
+<div id="panel">
+<header>
+  <h1>🌳 Registro Plantaciones Forestales BPS — Victor E. Mendoza</h1>
+  <p>Especialista en Gestión del Catastro Forestal - BPS</p>
+</header>
+
+<div class="toolbar">
+  <button id="btn-gps"><i class="fa-solid fa-location-dot"></i> Activar GPS</button>
+  <button id="btn-gps-vertex" class="primary"><i class="fa-solid fa-crosshairs"></i> Agregar vértice</button>
+</div>
+
+<div class="infoBox">
+  <div class="small">Cargar CSV/Excel con coordenadas</div>
+  <button id="btn-upload" style="width:100%;"><i class="fa-solid fa-file-import"></i> Cargar CSV/Excel</button>
+  <input id="file-input" type="file" accept=".csv,.xlsx" style="display:none" />
+
+  <div style="margin-top:8px;">
+    <div class="small">CRS:</div>
+    <select id="crs-select" style="width:100%;">
+      <option value="4326">EPSG:4326</option>
+      <option value="32717">EPSG:32717</option>
+      <option value="32718" selected>EPSG:32718</option>
+      <option value="32719">EPSG:32719</option>
+    </select>
+  </div>
+</div>
+
+<div id="results" class="infoBox">
+  <div class="small"><b>Predios intersectados</b></div>
+  <div id="tabla-inter" style="margin-top:8px;">No hay resultados.</div>
+</div>
+
+</div>
+
 <div id="map"></div>
+<div id="status-msg"></div>
+
+<!-- LIBRERÍAS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+<script src="https://unpkg.com/esri-leaflet@3.0.11/dist/esri-leaflet.js"></script>
 
 <script>
-//---------------------------------------------
-// 1. Crear mapa
-//---------------------------------------------
-var map = L.map('map').setView([-7.15, -78.50], 12);
+/* ==========================================
+   CONFIG INICIAL
+========================================== */
 
-// Capa base
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; OpenStreetMap'
-}).addTo(map);
+proj4.defs("EPSG:32717","+proj=utm +zone=17 +south +datum=WGS84 +units=m +no_defs");
+proj4.defs("EPSG:32718","+proj=utm +zone=18 +south +datum=WGS84 +units=m +no_defs");
+proj4.defs("EPSG:32719","+proj=utm +zone=19 +south +datum=WGS84 +units=m +no_defs");
 
-//---------------------------------------------
-// 2. Servicio REST Catastro Rural (MIDAGRI)
-//---------------------------------------------
-var urlServicio = "https://georural.midagri.gob.pe/geoservicios/rest/services/public/Catastro_Rural/MapServer/0";
+/* Mapa */
+const map = L.map('map').setView([-7.2, -78.5], 8);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 
-//---------------------------------------------
-// 3. Cargar la capa del Catastro Rural
-//---------------------------------------------
-var capaPredios = L.esri.featureLayer({
-    url: urlServicio,
-    simplifyFactor: 0.5,
-    precision: 5,
-    fields: ["*"]
-}).addTo(map);
+/* Capas */
+const uploadedLayer = L.featureGroup().addTo(map);
+const intersectLayer = L.featureGroup().addTo(map);
+const labelLayer = L.featureGroup().addTo(map);
 
-//---------------------------------------------
-// 4. Etiquetado usando COD_PREDIO
-//---------------------------------------------
-var etiquetas = {};
+let inputPolygonFeature = null;
 
-capaPredios.on("load", function() {
+/* Propietarios: key = cod_predio */
+let propietariosMap = {};
+let propietariosAlternate = {}; // sin ceros adelante
 
-    capaPredios.eachFeature(function(layer) {
+/* Mensaje */
+function showStatus(msg,color="#0b6b2b"){
+  const el=document.getElementById("status-msg");
+  el.style.background=color;
+  el.textContent=msg;
+  el.classList.add("show");
+  clearTimeout(el._t);
+  el._t=setTimeout(()=>el.classList.remove("show"),2000);
+}
 
-        var attrs = layer.feature.properties;
+/* ==========================================
+   PARSE CSV / XLSX
+========================================== */
 
-        var cod = attrs.COD_PREDIO;  // <- CLAVE ÚNICA REAL
-        var titular = attrs.TITULAR ? attrs.TITULAR.trim() : "SIN TITULAR";
-        
-        if (!cod || cod === "") return;
+document.getElementById("btn-upload").onclick=()=>{
+  document.getElementById("file-input").click();
+};
 
-        // Evitar duplicados
-        if (etiquetas[cod]) return;
+document.getElementById("file-input").onchange=e=>{
+  const f=e.target.files[0];
+  if(!f) return;
+  const ext=f.name.split(".").pop().toLowerCase();
+  const crs=document.getElementById("crs-select").value;
 
-        // Obtener centroide del polígono
-        var centroide;
-        try {
-            centroide = layer.getBounds().getCenter();
-        } catch (e) {
-            return;
+  if(ext==="csv") parseCSV(f,crs);
+  else parseXLSX(f,crs);
+};
+
+function parseCSV(file, crs){
+  Papa.parse(file,{
+    header:true,
+    skipEmptyLines:true,
+    complete:r=>{
+      const rows=r.data;
+      const pts=[];
+
+      rows.forEach(row=>{
+        const l={};
+        for(const k in row) l[k.trim().toLowerCase()] = row[k];
+
+        const x=parseFloat(l["x"]??l["este"]??l["lon"]);
+        const y=parseFloat(l["y"]??l["norte"]??l["lat"]);
+        const cod=l["cod_predio"]??"";
+
+        if(cod){
+          propietariosMap[cod]=l["titular"]??"SIN NOMBRE";
+          propietariosAlternate[cod.replace(/^0+/,"")] = l["titular"]??"SIN NOMBRE";
         }
 
-        // Crear etiqueta
-        var label = L.marker(centroide, {
-            icon: L.divIcon({
-                className: "label-predio",
-                html: titular,
-                iconSize: "auto"
-            })
-        }).addTo(map);
+        if(!isNaN(x)&&!isNaN(y)) pts.push([x,y]);
+      });
 
-        etiquetas[cod] = label;
+      construirPoligono(pts,crs);
+    }
+  });
+}
 
-        // Popup
-        layer.bindPopup(
-            "<b>COD PREDIO:</b> " + cod +
-            "<br><b>TITULAR:</b> " + titular +
-            "<br><b>AREA (ha):</b> " + (attrs.AREA_HA || " - ")
-        );
+function parseXLSX(file,crs){
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const wb=XLSX.read(e.target.result,{type:"binary"});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const data=XLSX.utils.sheet_to_json(ws,{header:1});
 
+    const headers=data[0].map(h=>String(h).toLowerCase());
+    const colX=headers.findIndex(h=>h.includes("este")||h==="x"||h.includes("lon"));
+    const colY=headers.findIndex(h=>h.includes("norte")||h==="y"||h.includes("lat"));
+    const colCod=headers.findIndex(h=>h==="cod_predio");
+    const colTit=headers.findIndex(h=>h==="titular");
+
+    const pts=[];
+    data.slice(1).forEach(r=>{
+      const x=r[colX], y=r[colY];
+      const cod=r[colCod], tit=r[colTit];
+
+      if(cod){
+        propietariosMap[cod]=tit??"SIN NOMBRE";
+        propietariosAlternate[String(cod).replace(/^0+/,"")] = tit??"SIN NOMBRE";
+      }
+
+      if(!isNaN(x)&&!isNaN(y)) pts.push([x,y]);
     });
 
-});
-</script>
+    construirPoligono(pts,crs);
+  };
+  reader.readAsBinaryString(file);
+}
 
+/* ==========================================
+   DIBUJO DEL POLÍGONO
+========================================== */
+
+function construirPoligono(rows,crs){
+  uploadedLayer.clearLayers();
+  intersectLayer.clearLayers();
+  labelLayer.clearLayers();
+
+  if(rows.length<3){
+    document.getElementById("tabla-inter").innerHTML="Se requieren al menos 3 puntos.";
+    return;
+  }
+
+  const ptsLatLon=[];
+  rows.forEach(r=>{
+    let x=r[0], y=r[1];
+    let ll;
+
+    if(crs==="4326") ll=[x,y];
+    else ll=proj4("EPSG:"+crs,"EPSG:4326",[x,y]);
+
+    ptsLatLon.push([ll[1],ll[0]]);
+  });
+
+  const first=ptsLatLon[0];
+  const last=ptsLatLon[ptsLatLon.length-1];
+  if(first[0]!==last[0] || first[1]!==last[1])
+    ptsLatLon.push(first);
+
+  const poly=L.polygon(ptsLatLon,{color:"#0056b3",fillOpacity:0.15}).addTo(uploadedLayer);
+  map.fitBounds(poly.getBounds().pad(0.2));
+
+  const coordsLonLat=ptsLatLon.map(p=>[p[1],p[0]]);
+
+  inputPolygonFeature={
+    type:"Feature",
+    properties:{},
+    geometry:{ type:"Polygon", coordinates:[coordsLonLat] }
+  };
+
+  consultarMIDAGRI(inputPolygonFeature);
+}
+
+/* ==========================================
+   CONSULTA MIDAGRI
+========================================== */
+
+const MIDAGRI_URL="https://georural.midagri.gob.pe/geoservicios/rest/services/public/Catastro_Rural/MapServer/0";
+const midagriLayer=L.esri.featureLayer({url:MIDAGRI_URL});
+
+function consultarMIDAGRI(geojsonFeature){
+  document.getElementById("tabla-inter").innerHTML="Consultando MIDAGRI...";
+
+  midagriLayer.query().intersects(geojsonFeature).run((err,fc)=>{
+    if(err){
+      document.getElementById("tabla-inter").innerHTML="Error al consultar MIDAGRI";
+      return;
+    }
+
+    const feats=fc.features??[];
+    if(feats.length===0){
+      document.getElementById("tabla-inter").innerHTML="No hay predios intersectados.";
+      return;
+    }
+
+    intersectLayer.clearLayers();
+    labelLayer.clearLayers();
+
+    let html="<table><tr><th>cod_predio</th><th>Titular</th></tr>";
+
+    feats.forEach(f=>{
+      const cod=String(f.properties.cod_predio??"").trim();
+      const codSinCeros=cod.replace(/^0+/,"");
+
+      let titular = propietariosMap[cod] ??
+                    propietariosAlternate[codSinCeros] ??
+                    "SIN REGISTRO";
+
+      // Pintar
+      const layer=L.geoJSON(f,{style:{color:"#00a94f",weight:2,fillOpacity:0.25}}).addTo(intersectLayer);
+
+      // Etiqueta
+      try {
+        const center=turf.centerOfMass(f).geometry.coordinates;
+        L.marker([center[1],center[0]],{
+          icon:L.divIcon({
+            className:"etiqueta-predio",
+            html:`${titular}`
+          })
+        }).addTo(labelLayer);
+      }catch(e){}
+
+      html+=`<tr><td>${cod}</td><td>${titular}</td></tr>`;
+    });
+
+    html+="</table>";
+    document.getElementById("tabla-inter").innerHTML=html;
+  });
+}
+
+</script>
 </body>
 </html>
