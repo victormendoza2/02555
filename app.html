@@ -1,13 +1,15 @@
 <!doctype html>
-
 <html lang="es">
 <head>
   <meta charset="utf-8" />
   <title>Registro Plantaciones Forestales BPS — Con Titulares (cod_predio)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+
   <style>
     html, body { height:100%; margin:0; font-family: Arial, sans-serif; }
     body { display:flex; }
@@ -16,110 +18,267 @@
     header h1 { margin:0; font-size:15px; }
     header p { margin:6px 0 0 0; font-size:12px; opacity:0.95; }
 
-```
-.toolbar { display:flex; gap:6px; padding:10px; background:#fff; align-items:center; border-bottom:1px solid #e6e6e6; flex-wrap:wrap; }
-.toolbar button, .toolbar select, .toolbar input[type="file"] {
-  background:white; border:1px solid #d0d0d0; padding:8px 10px; border-radius:8px;
-  cursor:pointer; display:flex; gap:6px; align-items:center; font-size:13px;
-}
-.toolbar button.primary { background:#0b6b2b; color:white; border-color:#0b6b2b; }
-.controls { padding:10px; display:flex; flex-direction:column; gap:8px; }
+    .toolbar { display:flex; gap:6px; padding:10px; background:#fff; align-items:center; border-bottom:1px solid #e6e6e6; flex-wrap:wrap; }
+    .toolbar button { background:white; border:1px solid #d0d0d0; padding:8px 10px; border-radius:8px; cursor:pointer; font-size:13px; }
+    .toolbar button.primary { background:#0b6b2b; color:white; border-color:#0b6b2b; }
 
-.infoBox { background:#fff; padding:8px 10px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.06); font-size:13px; text-align:left; }
-.small { font-size:12px; color:#444; }
-#map { flex:1; height:100vh; }
+    .controls { padding:10px; display:flex; flex-direction:column; gap:8px; }
+    .infoBox { background:#fff; padding:8px 10px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.06); font-size:13px; }
+    .small { font-size:12px; color:#444; }
+    #map { flex:1; height:100vh; }
 
-.legend { display:flex; gap:8px; align-items:center; font-size:12px; margin-top:6px; flex-wrap:wrap; }
-.dot { width:12px; height:12px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,0.1); }
-.label { background: rgba(255,255,255,0.95); padding:4px 6px; border-radius:6px; border:1px solid #ddd; font-size:12px; font-weight:600; }
+    .label-area {
+      background: rgba(255,255,255,0.95);
+      padding:4px 6px;
+      border-radius:6px;
+      border:1px solid #ddd;
+      font-size:12px;
+      font-weight:600;
+      pointer-events:none;
+    }
 
-.etiqueta-predio {
-  background: rgba(255,255,255,0.95);
-  border: 1px solid rgba(0,0,0,0.45);
-  padding: 2px 6px;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 4px;
-  white-space: nowrap;
-  pointer-events: none;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
-}
+    .etiqueta-predio {
+      background: rgba(255,255,255,0.95);
+      border: 1px solid rgba(0,0,0,0.45);
+      padding: 2px 6px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 4px;
+      white-space: nowrap;
+      pointer-events: none;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    }
 
-#status-msg {
-  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
-  background: rgba(11,107,43,0.95); color: white; padding: 8px 16px;
-  border-radius: 20px; font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-  opacity: 0; transition: opacity 0.35s ease-in-out; z-index: 99999;
-}
-#status-msg.show { opacity: 1; }
+    #status-msg {
+      position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+      background: rgba(11,107,43,0.95); color: white; padding: 8px 16px;
+      border-radius: 20px; font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      opacity: 0; transition: opacity 0.35s ease-in-out; z-index: 99999;
+    }
+    #status-msg.show { opacity: 1; }
 
-#results { padding:10px; overflow:auto; max-height:40vh; }
-table { width:100%; border-collapse:collapse; font-size:13px; }
-th, td { border:1px solid #e6e6e6; padding:6px; text-align:left; }
-th { background:#f0f0f0; font-weight:700; }
-```
-
+    #results { padding:10px; overflow:auto; max-height:40vh; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { border:1px solid #e6e6e6; padding:6px; }
+    th { background:#f0f0f0; }
   </style>
 </head>
 <body>
-<!-- CONTENIDO VISUAL SIN CAMBIOS -->
-<div id="panel">...</div>
+
+<div id="panel">
+  <header>
+    <h1>🌳 Registro Plantaciones Forestales BPS</h1>
+    <p>Catastro Rural – MIDAGRI | Etiquetado por cod_predio</p>
+  </header>
+
+  <div class="toolbar">
+    <button id="btn-upload"><i class="fa-solid fa-file-import"></i> Cargar CSV / Excel</button>
+    <button id="btn-clear"><i class="fa-solid fa-trash"></i> Limpiar</button>
+  </div>
+
+  <div class="controls">
+    <div class="infoBox">
+      <div class="small"><b>CRS de entrada (para cálculo planar)</b></div>
+      <select id="crs-select" style="width:100%; margin-top:6px;">
+        <option value="32717">EPSG:32717 – UTM 17S</option>
+        <option value="32718" selected>EPSG:32718 – UTM 18S</option>
+        <option value="32719">EPSG:32719 – UTM 19S</option>
+      </select>
+      <div class="small" style="margin-top:6px;">
+        👉 El área se calcula <b>solo</b> para el polígono generado desde el Excel/CSV, en forma <b>planar</b>.
+      </div>
+    </div>
+
+    <div id="results" class="infoBox">
+      <div class="small"><b>Predios rurales intersectados</b></div>
+      <div id="tabla-inter" style="margin-top:6px;">—</div>
+    </div>
+  </div>
+</div>
+
 <div id="map"></div>
 <div id="status-msg"></div>
 
+<input id="file-input" type="file" accept=".csv,.xlsx" style="display:none" />
+
+<!-- Libs -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-
 <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
-
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
-
 <script src="https://unpkg.com/esri-leaflet@3.0.11/dist/esri-leaflet.js"></script>
 
 <script>
-/* ================== CAMBIO CLAVE ==================
-   Área PLANAR solo para el polígono generado
-   desde Excel/CSV. Todo lo demás se mantiene.
-*/
-
-function planarAreaUTM(coords, crs){
-  // coords: [[x,y], ...] en CRS de entrada
-  // si vienen en 4326, primero reproyectar a UTM
-  let pts = coords.map(p=>{
-    if(crs==='4326'){
-      const utm = proj4('EPSG:4326','EPSG:32718',[p[0],p[1]]);
-      return utm;
-    }
-    return p;
-  });
-  let area = 0;
-  for(let i=0;i<pts.length-1;i++){
-    area += pts[i][0]*pts[i+1][1] - pts[i+1][0]*pts[i][1];
-  }
-  return Math.abs(area/2);
+/********************
+ * UTIL
+ ********************/
+function showStatus(msg, color="#0b6b2b", t=2500){
+  const el=document.getElementById('status-msg');
+  el.style.background=color; el.textContent=msg; el.classList.add('show');
+  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),t);
 }
 
-/* EN handleRows():
-   - se elimina turf.area para el Excel
-   - se usa planarAreaUTM
-*/
+/********************
+ * PROJ
+ ********************/
+proj4.defs("EPSG:32717","+proj=utm +zone=17 +south +datum=WGS84 +units=m +no_defs");
+proj4.defs("EPSG:32718","+proj=utm +zone=18 +south +datum=WGS84 +units=m +no_defs");
+proj4.defs("EPSG:32719","+proj=utm +zone=19 +south +datum=WGS84 +units=m +no_defs");
 
-// >>> SOLO ESTA PARTE CAMBIA RESPECTO A TU HTML ORIGINAL <<<
+/********************
+ * MAP
+ ********************/
+const map=L.map('map',{maxZoom:22}).setView([-7.2,-78.5],8);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:22}).addTo(map);
 
-// después de construir "rows" y antes de etiquetar:
-//
-// const area_m2 = planarAreaUTM(rows, crs);
-// const area_ha = (area_m2/10000).toFixed(2);
-//
-// y esa area_ha se usa para la etiqueta del polígono Excel
+const inputLayer=new L.FeatureGroup().addTo(map);
+const intersectLayer=new L.FeatureGroup().addTo(map);
+const labelLayer=new L.FeatureGroup().addTo(map);
 
-/* ================== FIN CAMBIO ================== */
+/********************
+ * DATOS
+ ********************/
+let propietariosMap={};
+let inputPolygon=null;
+
+/********************
+ * CARGA CSV / XLSX
+ ********************/
+document.getElementById('btn-upload').onclick=()=>document.getElementById('file-input').click();
+document.getElementById('file-input').onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  if(/propiet/i.test(f.name)) return loadPropietarios(f);
+  const ext=f.name.split('.').pop().toLowerCase();
+  if(ext==='csv') loadCoordsCSV(f); else loadCoordsXLSX(f);
+};
+
+function loadCoordsCSV(file){
+  Papa.parse(file,{header:true,skipEmptyLines:true,complete:r=>{
+    const rows=r.data;
+    const pts=[];
+    rows.forEach(o=>{
+      const k=Object.keys(o);
+      const x=parseFloat(o[k[0]]); const y=parseFloat(o[k[1]]);
+      if(!isNaN(x)&&!isNaN(y)) pts.push([x,y]);
+    });
+    buildPolygonFromProjected(pts);
+  }});
+}
+
+function loadCoordsXLSX(file){
+  const rd=new FileReader();
+  rd.onload=e=>{
+    const wb=XLSX.read(e.target.result,{type:'binary'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const arr=XLSX.utils.sheet_to_json(ws,{header:1});
+    const pts=[];
+    arr.slice(1).forEach(r=>{
+      const x=parseFloat(r[0]); const y=parseFloat(r[1]);
+      if(!isNaN(x)&&!isNaN(y)) pts.push([x,y]);
+    });
+    buildPolygonFromProjected(pts);
+  };
+  rd.readAsBinaryString(file);
+}
+
+/********************
+ * POLÍGONO PLANAR
+ ********************/
+function buildPolygonFromProjected(points){
+  inputLayer.clearLayers(); labelLayer.clearLayers(); intersectLayer.clearLayers();
+  if(points.length<3){ showStatus('Se requieren al menos 3 puntos','#c0392b'); return; }
+
+  const crs=document.getElementById('crs-select').value;
+  const latlngs=[];
+  const projected=[];
+
+  points.forEach(p=>{
+    projected.push(p);
+    const ll=proj4('EPSG:'+crs,'EPSG:4326',p);
+    latlngs.push([ll[1],ll[0]]);
+  });
+
+  const poly=L.polygon(latlngs,{color:'#0056b3',fillOpacity:0.2}).addTo(inputLayer);
+  map.fitBounds(poly.getBounds().pad(0.15));
+
+  // Área planar (shoelace)
+  let area=0;
+  for(let i=0,j=projected.length-1;i<projected.length;j=i++){
+    area+=(projected[j][0]+projected[i][0])*(projected[j][1]-projected[i][1]);
+  }
+  area=Math.abs(area/2); // m2
+  const areaHa=(area/10000).toFixed(3);
+
+  const c=poly.getBounds().getCenter();
+  L.marker(c,{icon:L.divIcon({className:'label-area',html:areaHa+' ha'})}).addTo(labelLayer);
+
+  inputPolygon={
+    type:'Feature',
+    geometry:{type:'Polygon',coordinates:[projected.map(p=>proj4('EPSG:'+crs,'EPSG:4326',p))]},
+    properties:{area_ha:areaHa}
+  };
+
+  queryMIDAGRI();
+}
+
+/********************
+ * MIDAGRI
+ ********************/
+const midagri=L.esri.featureLayer({
+  url:'https://georural.midagri.gob.pe/geoservicios/rest/services/public/Catastro_Rural/MapServer/0'
+});
+
+function queryMIDAGRI(){
+  if(!inputPolygon) return;
+  midagri.query().intersects(inputPolygon).run((err,fc)=>{
+    if(err){ showStatus('Error MIDAGRI','#c0392b'); return; }
+    intersectLayer.clearLayers(); labelLayer.clearLayers();
+    const feats=fc.features||[];
+    if(!feats.length){ document.getElementById('tabla-inter').innerHTML='Sin intersección'; return; }
+
+    let html='<table><tr><th>cod_predio</th><th>Titular</th></tr>';
+
+    feats.forEach(f=>{
+      const p=f.properties||{};
+      const cod=String(p.cod_predio||p.COD_PREDIO||'').trim();
+      const titular=propietariosMap[cod]||'—';
+
+      L.geoJSON(f,{style:{color:'#27ae60',weight:2,fillOpacity:0.25}}).addTo(intersectLayer);
+      const cent=turf.centroid(f).geometry.coordinates;
+      L.marker([cent[1],cent[0]],{icon:L.divIcon({className:'etiqueta-predio',html:titular})}).addTo(labelLayer);
+
+      html+=`<tr><td>${cod}</td><td>${titular}</td></tr>`;
+    });
+    html+='</table>';
+    document.getElementById('tabla-inter').innerHTML=html;
+    showStatus('Intersección completada');
+  });
+}
+
+/********************
+ * PROPIETARIOS
+ ********************/
+function loadPropietarios(file){
+  Papa.parse(file,{header:true,skipEmptyLines:true,complete:r=>{
+    propietariosMap={};
+    r.data.forEach(o=>{
+      const k=Object.keys(o);
+      const cod=String(o[k[0]]).trim();
+      const nom=String(o[k[1]]).trim();
+      if(cod) propietariosMap[cod]=nom;
+    });
+    showStatus('Propietarios cargados');
+  }});
+}
+
+/********************
+ * LIMPIAR
+ ********************/
+document.getElementById('btn-clear').onclick=()=>{
+  inputLayer.clearLayers(); intersectLayer.clearLayers(); labelLayer.clearLayers();
+  document.getElementById('tabla-inter').innerHTML='—';
+};
 </script>
-
 </body>
 </html>
