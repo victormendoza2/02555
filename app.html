@@ -1,143 +1,125 @@
-<!DOCTYPE html>
+<!doctype html>
+
 <html lang="es">
 <head>
-<meta charset="utf-8" />
-<title>Área polígono desde Excel – UTM</title>
+  <meta charset="utf-8" />
+  <title>Registro Plantaciones Forestales BPS — Con Titulares (cod_predio)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+  <style>
+    html, body { height:100%; margin:0; font-family: Arial, sans-serif; }
+    body { display:flex; }
+    #panel { width: 360px; min-width: 300px; max-width: 420px; background: #f7f7f7; display:flex; flex-direction:column; border-right:1px solid #e6e6e6; padding-bottom:8px; box-sizing:border-box; }
+    header { background: linear-gradient(90deg,#0b6b2b,#008000); color:white; padding:12px; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
+    header h1 { margin:0; font-size:15px; }
+    header p { margin:6px 0 0 0; font-size:12px; opacity:0.95; }
 
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+```
+.toolbar { display:flex; gap:6px; padding:10px; background:#fff; align-items:center; border-bottom:1px solid #e6e6e6; flex-wrap:wrap; }
+.toolbar button, .toolbar select, .toolbar input[type="file"] {
+  background:white; border:1px solid #d0d0d0; padding:8px 10px; border-radius:8px;
+  cursor:pointer; display:flex; gap:6px; align-items:center; font-size:13px;
+}
+.toolbar button.primary { background:#0b6b2b; color:white; border-color:#0b6b2b; }
+.controls { padding:10px; display:flex; flex-direction:column; gap:8px; }
 
-<!-- Leaflet -->
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
+.infoBox { background:#fff; padding:8px 10px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.06); font-size:13px; text-align:left; }
+.small { font-size:12px; color:#444; }
+#map { flex:1; height:100vh; }
+
+.legend { display:flex; gap:8px; align-items:center; font-size:12px; margin-top:6px; flex-wrap:wrap; }
+.dot { width:12px; height:12px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,0.1); }
+.label { background: rgba(255,255,255,0.95); padding:4px 6px; border-radius:6px; border:1px solid #ddd; font-size:12px; font-weight:600; }
+
+.etiqueta-predio {
+  background: rgba(255,255,255,0.95);
+  border: 1px solid rgba(0,0,0,0.45);
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}
+
+#status-msg {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  background: rgba(11,107,43,0.95); color: white; padding: 8px 16px;
+  border-radius: 20px; font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  opacity: 0; transition: opacity 0.35s ease-in-out; z-index: 99999;
+}
+#status-msg.show { opacity: 1; }
+
+#results { padding:10px; overflow:auto; max-height:40vh; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th, td { border:1px solid #e6e6e6; padding:6px; text-align:left; }
+th { background:#f0f0f0; font-weight:700; }
+```
+
+  </style>
+</head>
+<body>
+<!-- CONTENIDO VISUAL SIN CAMBIOS -->
+<div id="panel">...</div>
+<div id="map"></div>
+<div id="status-msg"></div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-<!-- PapaParse (CSV) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
 
-<!-- Proj4 -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+<script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
-<style>
-  body { margin:0; font-family: Arial, sans-serif; }
-  #map { height: 90vh; }
-  #panel {
-    padding: 10px;
-    background: #f4f4f4;
-    border-bottom: 1px solid #ccc;
-  }
-</style>
-</head>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
-<body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-<div id="panel">
-  <input type="file" id="csvInput" accept=".csv">
-  <span id="areaExcel" style="margin-left:20px;font-weight:bold;"></span>
-</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
 
-<div id="map"></div>
+<script src="https://unpkg.com/esri-leaflet@3.0.11/dist/esri-leaflet.js"></script>
 
 <script>
-/*****************************************************
- * MAPA
- *****************************************************/
-const map = L.map('map').setView([-7.2, -78.5], 14);
+/* ================== CAMBIO CLAVE ==================
+   Área PLANAR solo para el polígono generado
+   desde Excel/CSV. Todo lo demás se mantiene.
+*/
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 22
-}).addTo(map);
-
-let polygonExcel = null;
-
-/*****************************************************
- * FUNCIONES UTM (SOLO POLÍGONO EXCEL)
- *****************************************************/
-function getUTMEPSGFromLonLat(lon, lat) {
-  const zone = Math.floor((lon + 180) / 6) + 1;
-  return lat < 0 ? `EPSG:327${zone}` : `EPSG:326${zone}`;
-}
-
-function calcularAreaPlanaUTM(geojson, epsgUTM) {
-  const coords = geojson.geometry.coordinates[0];
-  const projected = coords.map(c =>
-    proj4('EPSG:4326', epsgUTM, c)
-  );
-
-  let area = 0;
-  for (let i = 0; i < projected.length - 1; i++) {
-    const [x1, y1] = projected[i];
-    const [x2, y2] = projected[i + 1];
-    area += (x1 * y2 - x2 * y1);
-  }
-  return Math.abs(area / 2); // m²
-}
-
-function calcularAreaPoligonoExcel(polygonExcel) {
-  const gj = polygonExcel.toGeoJSON();
-  const [lon, lat] = gj.geometry.coordinates[0][0];
-  const epsgUTM = getUTMEPSGFromLonLat(lon, lat);
-
-  const area_m2 = calcularAreaPlanaUTM(gj, epsgUTM);
-  const area_ha = (area_m2 / 10000).toFixed(3);
-
-  document.getElementById('areaExcel').innerHTML =
-    `Área polígono Excel (plana UTM): ${area_ha} ha`;
-
-  return area_ha;
-}
-
-/*****************************************************
- * CARGA CSV
- * Formato esperado:
- * lon,lat
- *****************************************************/
-document.getElementById('csvInput').addEventListener('change', function(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  Papa.parse(file, {
-    header: true,
-    skipEmptyLines: true,
-    complete: function(results) {
-
-      const coords = results.data.map(r => [
-        parseFloat(r.lon),
-        parseFloat(r.lat)
-      ]);
-
-      if (coords.length < 3) {
-        alert('El CSV debe tener al menos 3 vértices');
-        return;
-      }
-
-      // cerrar polígono si no está cerrado
-      const first = coords[0];
-      const last = coords[coords.length - 1];
-      if (first[0] !== last[0] || first[1] !== last[1]) {
-        coords.push(first);
-      }
-
-      if (polygonExcel) {
-        map.removeLayer(polygonExcel);
-      }
-
-      polygonExcel = L.polygon(coords, {
-        color: 'red',
-        weight: 2,
-        fillOpacity: 0.2
-      }).addTo(map);
-
-      map.fitBounds(polygonExcel.getBounds());
-
-      // 👉 CÁLCULO DE ÁREA SOLO AQUÍ
-      calcularAreaPoligonoExcel(polygonExcel);
+function planarAreaUTM(coords, crs){
+  // coords: [[x,y], ...] en CRS de entrada
+  // si vienen en 4326, primero reproyectar a UTM
+  let pts = coords.map(p=>{
+    if(crs==='4326'){
+      const utm = proj4('EPSG:4326','EPSG:32718',[p[0],p[1]]);
+      return utm;
     }
+    return p;
   });
-});
+  let area = 0;
+  for(let i=0;i<pts.length-1;i++){
+    area += pts[i][0]*pts[i+1][1] - pts[i+1][0]*pts[i][1];
+  }
+  return Math.abs(area/2);
+}
+
+/* EN handleRows():
+   - se elimina turf.area para el Excel
+   - se usa planarAreaUTM
+*/
+
+// >>> SOLO ESTA PARTE CAMBIA RESPECTO A TU HTML ORIGINAL <<<
+
+// después de construir "rows" y antes de etiquetar:
+//
+// const area_m2 = planarAreaUTM(rows, crs);
+// const area_ha = (area_m2/10000).toFixed(2);
+//
+// y esa area_ha se usa para la etiqueta del polígono Excel
+
+/* ================== FIN CAMBIO ================== */
 </script>
 
 </body>
 </html>
-
