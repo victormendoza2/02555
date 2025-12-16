@@ -202,7 +202,7 @@
 
 
   // -----------------------------------------------------------------------
-  // LÓGICA DE DETERMINACIÓN DE ZONA UTM (NUEVA FUNCIÓN)
+  // LÓGICA DE DETERMINACIÓN DE ZONA UTM
   // -----------------------------------------------------------------------
 
   /**
@@ -219,12 +219,12 @@
   }
 
   // -----------------------------------------------------------------------
-  // FUNCIÓN PARA CÁLCULO DE ÁREA PLANAR (UTM) (NUEVA FUNCIÓN REFORZADA)
+  // FUNCIÓN PARA CÁLCULO DE ÁREA PLANAR (UTM)
   // -----------------------------------------------------------------------
   /**
    * Calcula el área planar de un polígono en metros cuadrados (m²) 
    * proyectando a la zona UTM (EPSG:327xx) adecuada.
-   * * @param {object} geojson - Objeto GeoJSON de un polígono (en WGS84 Lon/Lat).
+   * @param {object} geojson - Objeto GeoJSON de un polígono (en WGS84 Lon/Lat).
    * @param {string | null} [target_crs_code] - Código EPSG (ej. '32718'). 
    * Si es nulo, usa la zona UTM del centroide (para Dibujo/GPS).
    * Si es un '327xx', usa esa zona (para Excel/CSV).
@@ -283,16 +283,17 @@
   }
 
 
-  // ---------- Label area (MODIFICADA para usar cálculo planar) ----------
+  // ---------- Label area (MODIFICADA para usar cálculo planar y 3 decimales) ----------
   function addOrUpdateLabel(layer){
     try {
       const gj = layer.toGeoJSON();
       // USO de calculatePlanarArea con CRS dinámico (null) para polígonos dibujados/GPS
       const area_m2 = calculatePlanarArea(gj, null); 
-      const area_ha = parseFloat((area_m2/10000).toFixed(2));
+      // *** MODIFICACIÓN DE PRECISIÓN A 3 DECIMALES ***
+      const area_ha = parseFloat((area_m2/10000).toFixed(3)); 
       const center = turf.centerOfMass(gj).geometry.coordinates; // [lon,lat]
       if(layer._label) map.removeLayer(layer._label);
-      layer._label = L.marker([center[1], center[0]], { icon: L.divIcon({ className:'label', html:`${area_ha} ha`}) }).addTo(map);
+      layer._label = L.marker([center[1], center[0]], { icon: L.divIcon({ className:'label', html:`${area_ha.toFixed(3)} ha`}) }).addTo(map);
     } catch(e){}
   }
 
@@ -370,7 +371,7 @@
     reader.readAsBinaryString(file);
   }
 
-  // ---------- Build polygon robustly and display (MODIFICADA para cálculo planar) ----------
+  // ---------- Build polygon robustly and display (MODIFICADA para cálculo planar y 3 decimales) ----------
   function handleRows(rows, crs, isArray=false){
     uploadedLayer.clearLayers(); intersectLayer.clearLayers(); labelLayer.clearLayers(); intersectFeatures = []; inputPolygonFeature = null; document.getElementById('tabla-inter').innerHTML = "Procesando...";
     const pointsLatLon = [];
@@ -413,21 +414,21 @@
       geometry: { type: 'Polygon', coordinates: [ coordsLonLat ] }
     };
 
-    // MODIFICACIÓN CLAVE: Usar calculatePlanarArea con el CRS seleccionado (crs)
+    // MODIFICACIÓN CLAVE: Usar calculatePlanarArea con el CRS seleccionado (crs) y 3 decimales
     try { 
-        // Si el CRS es '4326', calculatePlanarArea lo detectará y usará la zona dinámica, pero si es '327xx', lo usará directamente para el cálculo planar.
-        gj.properties.area_ha = parseFloat((calculatePlanarArea(gj, crs) / 10000).toFixed(2)); 
+        const area_m2 = calculatePlanarArea(gj, crs);
+        gj.properties.area_ha = parseFloat((area_m2 / 10000).toFixed(3)); 
     } catch(e){ 
         console.error("Error al calcular área planar de entrada:", e);
         // Fallback a área geodésica si falla el planar
-        gj.properties.area_ha = parseFloat((turf.area(gj) / 10000).toFixed(2));
+        gj.properties.area_ha = parseFloat((turf.area(gj) / 10000).toFixed(3));
     }
     
-    // Actualizar etiqueta del polígono con el área planar calculada
+    // Actualizar etiqueta del polígono con el área planar calculada (3 decimales)
     if(poly._label) map.removeLayer(poly._label);
     const center = turf.centerOfMass(gj).geometry.coordinates;
     poly._label = L.marker([center[1], center[0]], { 
-        icon: L.divIcon({ className:'label', html:`${gj.properties.area_ha} ha`}) 
+        icon: L.divIcon({ className:'label', html:`${gj.properties.area_ha.toFixed(3)} ha`}) 
     }).addTo(map);
 
     inputPolygonFeature = gj;
@@ -440,7 +441,7 @@
   const MIDAGRI_LAYER_URL = 'https://georural.midagri.gob.pe/geoservicios/rest/services/public/Catastro_Rural/MapServer/0';
   const midagriLayer = L.esri.featureLayer({ url: MIDAGRI_LAYER_URL });
 
-  // ---------- Intersection: paint and store features + etiquetas (MODIFICADA para cálculo planar) ----------
+  // ---------- Intersection: paint and store features + etiquetas (MODIFICADA para cálculo planar y 3 decimales) ----------
   function checkIntersection(geojsonFeature){
     try {
       if(!geojsonFeature) return;
@@ -471,9 +472,10 @@
           // MODIFICACIÓN: Usar cálculo planar (CRS dinámico - null) como fallback si el área de la feature no existe o es 0
           let area_ha_calc;
           if (props.AREA && Number(props.AREA) > 0) {
-              area_ha_calc = (Number(props.AREA) / 10000).toFixed(3); // Área de la fuente (ArcGIS)
+              // Área de la fuente (ArcGIS) con 3 decimales
+              area_ha_calc = (Number(props.AREA) / 10000).toFixed(3); 
           } else {
-              // Calcular planar si AREA no existe o es 0
+              // Calcular planar si AREA no existe o es 0 (3 decimales)
               area_ha_calc = (calculatePlanarArea(f, null) / 10000).toFixed(3); 
           }
 
@@ -544,7 +546,7 @@
     return null;
   }
   
-  // ---------- Render table (MODIFICADA para mostrar área planar) ----------
+  // ---------- Render table (MODIFICADA para mostrar área planar y 3 decimales) ----------
   function renderTable(features){
     const div = document.getElementById('tabla-inter');
     if(!features || features.length === 0){ div.innerHTML = "<div class='small'>No hay predios intersectados.</div>"; return; }
@@ -566,7 +568,7 @@
       const props = f.properties || {};
       const titular = findTitularForFeature(collectCandidateKeysFromFeature(props)) || '';
       
-      // Recalcular área planar para la tabla
+      // Recalcular área planar para la tabla (3 decimales)
       const area_planar_calc = (calculatePlanarArea(f, null) / 10000).toFixed(3); 
       
       html += "<tr>";
@@ -577,7 +579,7 @@
           } else if (k === 'AREA_HA_PLANAR') {
               value = area_planar_calc;
           } else if (k === 'AREA_HA_ORIGEN') {
-              // Area from service properties, if available
+              // Area from service properties, if available (3 decimales)
               value = props.AREA ? (Number(props.AREA) / 10000).toFixed(3) : 'N/A';
           } else {
               value = (props && props[k]) ? String(props[k]) : '';
@@ -590,7 +592,7 @@
     div.innerHTML = html;
   }
   
-  // ---------- Downloads (MODIFICADA para incluir área planar) ----------
+  // ---------- Downloads (MODIFICADA para incluir área planar con 3 decimales) ----------
   document.getElementById('btn-download-midagri-geo').onclick = () => {
     if(!intersectFeatures || intersectFeatures.length === 0){ showStatus('No hay predios para descargar','#d9534f'); return; }
     const fc = { type:'FeatureCollection', features: intersectFeatures.map(f => {
@@ -598,8 +600,9 @@
         // Asegurar que el área calculada planar esté en las propiedades
         new_f.properties = new_f.properties || {};
         const planar_m2 = calculatePlanarArea(f, null).toFixed(2);
-        new_f.properties.AREA_PLANAR_M2 = planar_m2;
+        // *** PRECISIÓN A 3 DECIMALES ***
         new_f.properties.AREA_PLANAR_HA = (Number(planar_m2) / 10000).toFixed(3);
+        new_f.properties.AREA_PLANAR_M2 = planar_m2; // Mantenemos M2 a 2 decimales, HA a 3.
         return new_f;
     })};
     const blob = new Blob([JSON.stringify(fc)], { type:'application/geo+json' });
@@ -614,14 +617,15 @@
       const p = f.properties || {};
       const titular = findTitularForFeature(collectCandidateKeysFromFeature(p)) || p.TITULAR || p.NOMBRE || '';
       
-      // MODIFICACIÓN: Usar cálculo planar (CRS dinámico)
+      // MODIFICACIÓN: Usar cálculo planar (CRS dinámico) con 3 decimales
       const area_planar_calc = (calculatePlanarArea(f, null) / 10000).toFixed(3); 
       
       return {
         ID: p.OBJECTID || p.ID || p.OBJECTID_1 || "",
         COD_PREDIO: p.cod_predio || p.COD_PREDIO || '',
+        // *** PRECISIÓN A 3 DECIMALES ***
         AREA_HA_ORIGEN: p.AREA ? (Number(p.AREA)/10000).toFixed(3) : 'N/A',
-        AREA_HA_PLANAR: area_planar_calc, // Área calculada con precisión UTM
+        AREA_HA_PLANAR: area_planar_calc, // Área calculada con precisión UTM (3 decimales)
         DEPARTAMENTO: p.DEPARTAMEN || p.DEPARTAMENTO || "",
         PROVINCIA: p.PROVINCIA || "",
         DISTRITO: p.DISTRITO || "",
@@ -635,16 +639,19 @@
     showStatus('✅ CSV descargado');
   };
 
-  // ---------- Download input polygon (MODIFICADA para asegurar el área planar) ----------
+  // ---------- Download input polygon (MODIFICADA para asegurar el área planar con 3 decimales) ----------
   document.getElementById('btn-download-input-geo').onclick = () => {
     if(!inputPolygonFeature){ showStatus('No hay polígono de entrada','#d9534f'); return; }
     const gj = JSON.parse(JSON.stringify(inputPolygonFeature));
     gj.properties = gj.properties || {};
     // El área ya fue calculada de forma planar en handleRows o gps-vertex
     if (!gj.properties.area_ha) {
-        // Fallback: calcular planar con el CRS guardado o dinámico (null)
+        // Fallback: calcular planar con el CRS guardado o dinámico (null) (3 decimales)
         const crs = gj.properties.input_crs || null; 
-        gj.properties.area_ha = parseFloat((calculatePlanarArea(gj, crs)/10000).toFixed(2));
+        gj.properties.area_ha = parseFloat((calculatePlanarArea(gj, crs)/10000).toFixed(3));
+    } else {
+         // Asegurar 3 decimales en la propiedad (en caso de que se haya guardado con menos)
+         gj.properties.area_ha = parseFloat(gj.properties.area_ha).toFixed(3);
     }
     const blob = new Blob([JSON.stringify(gj)], { type:'application/geo+json' });
     const url = URL.createObjectURL(blob);
@@ -658,7 +665,7 @@
     map.fitBounds(intersectLayer.getBounds().pad(0.15));
   };
   
-  // ---------- AGREGAR VÉRTICE GPS (MODIFICADA para usar cálculo planar) ----------
+  // ---------- AGREGAR VÉRTICE GPS (MODIFICADA para usar cálculo planar y 3 decimales) ----------
   document.getElementById('btn-gps-vertex').onclick = () => {
     if(!gpsMarker) return alert('Activa el GPS primero.');
     const acc = gpsMarker.accuracy || 999;
@@ -671,14 +678,14 @@
       if(!activePolygon) activePolygon = L.polygon(gpsVertices, { color:'#0b6b2b', fillOpacity:0.12 }).addTo(gpsLayer);
       else activePolygon.setLatLngs(gpsVertices);
       
-      // La función addOrUpdateLabel internamente usa calculatePlanarArea(gj, null) (CRS dinámico)
+      // La función addOrUpdateLabel internamente usa calculatePlanarArea(gj, null) (CRS dinámico) con 3 decimales
       addOrUpdateLabel(activePolygon);
       
       const coordsLonLat = gpsVertices.map(pp => [pp[1], pp[0]]);
       if(coordsLonLat[0][0] !== coordsLonLat[coordsLonLat.length-1][0] || coordsLonLat[0][1] !== coordsLonLat[coordsLonLat.length-1][1]) coordsLonLat.push(coordsLonLat[0]);
       
       inputPolygonFeature = { type:'Feature', properties:{}, geometry:{ type:'Polygon', coordinates:[coordsLonLat] } };
-      // MODIFICACIÓN: Usar cálculo planar (CRS dinámico - null)
+      // MODIFICACIÓN: Usar cálculo planar (CRS dinámico - null) con 3 decimales
       inputPolygonFeature.properties.area_ha = parseFloat((calculatePlanarArea(inputPolygonFeature, null)/10000).toFixed(3));
       
       try { checkIntersection(inputPolygonFeature); } catch(e){}
@@ -769,7 +776,7 @@
   document.getElementById('btn-clear').onclick = () => {
     if(!confirm('¿Eliminar todo?')) return;
     gpsLayer.clearLayers(); drawnItems.clearLayers(); uploadedLayer.clearLayers(); trackLayer.setLatLngs([]); intersectLayer.clearLayers(); labelLayer.clearLayers();
-    gpsVertices=[]; trackCoords=[]; activePolygon=null; lastTrackPoint=null; intersectFeatures=[]; inputPolygonFeature=null;
+    gpsVertices=[]; trackCoords=[]; activePolygon=null; lastTrackPoint=null; intersectFeatures=null; inputPolygonFeature=null;
     if(gpsMarker){ map.removeLayer(gpsMarker); gpsMarker=null; } if(accuracyCircle){ map.removeLayer(accuracyCircle); accuracyCircle=null; }
     clearAllLabels(); infoPrecision.innerText='📡 Precisión: -- m'; localStorage.removeItem("bps_sesion");
     if(watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; document.getElementById('btn-gps').innerHTML='<i class="fa-solid fa-location-dot"></i>&nbsp;Activar GPS'; }
