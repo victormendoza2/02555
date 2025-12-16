@@ -4,281 +4,447 @@
   <meta charset="utf-8" />
   <title>Registro Plantaciones Forestales BPS — Con Titulares (cod_predio)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
-
   <style>
     html, body { height:100%; margin:0; font-family: Arial, sans-serif; }
     body { display:flex; }
     #panel { width: 360px; min-width: 300px; max-width: 420px; background: #f7f7f7; display:flex; flex-direction:column; border-right:1px solid #e6e6e6; padding-bottom:8px; box-sizing:border-box; }
     header { background: linear-gradient(90deg,#0b6b2b,#008000); color:white; padding:12px; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
-    header h1 { margin:0; font-size:15px; }
-    header p { margin:6px 0 0 0; font-size:12px; opacity:0.95; }
-
-    .toolbar { display:flex; gap:6px; padding:10px; background:#fff; align-items:center; border-bottom:1px solid #e6e6e6; flex-wrap:wrap; }
-    .toolbar button { background:white; border:1px solid #d0d0d0; padding:8px 10px; border-radius:8px; cursor:pointer; font-size:13px; }
-    .toolbar button.primary { background:#0b6b2b; color:white; border-color:#0b6b2b; }
-
-    .controls { padding:10px; display:flex; flex-direction:column; gap:8px; }
-    .infoBox { background:#fff; padding:8px 10px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.06); font-size:13px; }
-    .small { font-size:12px; color:#444; }
-    #map { flex:1; height:100vh; }
-
-    .label-area {
-      background: rgba(255,255,255,0.95);
-      padding:4px 6px;
-      border-radius:6px;
-      border:1px solid #ddd;
-      font-size:12px;
-      font-weight:600;
-      pointer-events:none;
+    header h1 { margin:0; font-size:1.3em; display:flex; align-items:center; }
+    header h1 i { margin-right:8px; }
+    #map { flex-grow: 1; }
+    #content { padding: 12px; overflow-y: auto; flex-grow: 1; }
+    .info-box { background: #fff; padding: 10px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 15px; }
+    .info-box h3 { margin-top: 0; font-size: 1.1em; color: #0b6b2b; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 10px; }
+    .info-box p { margin: 5px 0; font-size: 0.95em; }
+    .label { font-weight: bold; }
+    .value { color: #333; }
+    #download-csv, #clear-map, #export-geojson, #download-shp { background-color: #008000; color: white; border: none; padding: 10px 15px; text-align: center; text-decoration: none; display: inline-block; font-size: 14px; margin: 4px 2px; cursor: pointer; border-radius: 4px; transition: background-color 0.3s; }
+    #download-csv:hover, #clear-map:hover, #export-geojson:hover, #download-shp:hover { background-color: #0b6b2b; }
+    .file-upload { display: block; margin-top: 10px; padding: 8px; border: 1px dashed #ccc; border-radius: 4px; text-align: center; background: #f9f9f9; cursor: pointer; font-size: 0.9em; }
+    .file-upload:hover { background: #eee; }
+    .leaflet-draw-toolbar .leaflet-draw-draw-polygon,
+    .leaflet-draw-toolbar .leaflet-draw-edit-edit,
+    .leaflet-draw-toolbar .leaflet-draw-edit-delete {
+      background-image: url('https://unpkg.com/leaflet-draw@1.0.4/dist/images/spritesheet.png') !important;
     }
-
-    .etiqueta-predio {
-      background: rgba(255,255,255,0.95);
-      border: 1px solid rgba(0,0,0,0.45);
-      padding: 2px 6px;
-      font-size: 12px;
-      font-weight: 600;
-      border-radius: 4px;
-      white-space: nowrap;
-      pointer-events: none;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
-    }
-
-    #status-msg {
-      position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
-      background: rgba(11,107,43,0.95); color: white; padding: 8px 16px;
-      border-radius: 20px; font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-      opacity: 0; transition: opacity 0.35s ease-in-out; z-index: 99999;
-    }
-    #status-msg.show { opacity: 1; }
-
-    #results { padding:10px; overflow:auto; max-height:40vh; }
-    table { width:100%; border-collapse:collapse; font-size:13px; }
-    th, td { border:1px solid #e6e6e6; padding:6px; }
-    th { background:#f0f0f0; }
   </style>
 </head>
 <body>
-
-<div id="panel">
-  <header>
-    <h1>🌳 Registro Plantaciones Forestales BPS</h1>
-    <p>Catastro Rural – MIDAGRI | Etiquetado por cod_predio</p>
-  </header>
-
-  <div class="toolbar">
-    <button id="btn-upload"><i class="fa-solid fa-file-import"></i> Cargar CSV / Excel</button>
-    <button id="btn-clear"><i class="fa-solid fa-trash"></i> Limpiar</button>
-  </div>
-
-  <div class="controls">
-    <div class="infoBox">
-      <div class="small"><b>CRS de entrada (para cálculo planar)</b></div>
-      <select id="crs-select" style="width:100%; margin-top:6px;">
-        <option value="32717">EPSG:32717 – UTM 17S</option>
-        <option value="32718" selected>EPSG:32718 – UTM 18S</option>
-        <option value="32719">EPSG:32719 – UTM 19S</option>
-      </select>
-      <div class="small" style="margin-top:6px;">
-        👉 El área se calcula <b>solo</b> para el polígono generado desde el Excel/CSV, en forma <b>planar</b>.
+  <div id="panel">
+    <header>
+      <h1><i class="fa-solid fa-seedling"></i> Registro Plantaciones Forestales</h1>
+    </header>
+    <div id="content">
+      <div class="info-box">
+        <h3>1. Dibujo y Área</h3>
+        <p><span class="label">Área (m²):</span> <span class="value" id="area-m2">0.00</span></p>
+        <p><span class="label">Área (ha):</span> <span class="value" id="area-ha">0.00</span></p>
+        <button id="clear-map">Limpiar Mapa</button>
+      </div>
+      
+      <div class="info-box">
+        <h3>2. Cargar Titulares (CSV)</h3>
+        <p>Arrastre un archivo **CSV** (con campos `cod_predio` y `nombre`).</p>
+        <input type="file" id="file-input" style="display: none;" accept=".csv, .txt"/>
+        <label for="file-input" class="file-upload">
+          <i class="fa-solid fa-cloud-arrow-up"></i> Cargar archivo de Titulares
+        </label>
+        <p><span class="label">Cargados:</span> <span class="value" id="propietarios-count">0</span></p>
+      </div>
+      
+      <div class="info-box">
+        <h3>3. Descargar Datos</h3>
+        <p><span class="label">Predios Registrados:</span> <span class="value" id="predios-count">0</span></p>
+        <button id="download-csv">Descargar CSV</button>
+        <button id="download-shp">Descargar Shapefile (.zip)</button>
+        <button id="export-geojson">Descargar GeoJSON</button>
+      </div>
+      
+      <div class="info-box">
+        <h3>4. Captura de Datos</h3>
+        <p><span class="label">Código Predio:</span> <input type="text" id="cod_predio" placeholder="Ej: 12345" style="width: 100%; box-sizing: border-box;"></p>
+        <p><span class="label">Titular Sugerido:</span> <span class="value" id="sugerido" style="font-style: italic;">(Cargar CSV)</span></p>
+        <p><span class="label">Observaciones:</span> <input type="text" id="observaciones" placeholder="" style="width: 100%; box-sizing: border-box;"></p>
+        <button id="add-to-list" style="background-color: #2980b9;">Añadir a la lista</button>
+        <div id="message" style="margin-top:10px; color:red;"></div>
       </div>
     </div>
-
-    <div id="results" class="infoBox">
-      <div class="small"><b>Predios rurales intersectados</b></div>
-      <div id="tabla-inter" style="margin-top:6px;">—</div>
-    </div>
   </div>
-</div>
-
-<div id="map"></div>
-<div id="status-msg"></div>
-
-<input id="file-input" type="file" accept=".csv,.xlsx" style="display:none" />
-
-<!-- Libs -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
-<script src="https://unpkg.com/esri-leaflet@3.0.11/dist/esri-leaflet.js"></script>
-
-<script>
-/********************
- * UTIL
- ********************/
-function showStatus(msg, color="#0b6b2b", t=2500){
-  const el=document.getElementById('status-msg');
-  el.style.background=color; el.textContent=msg; el.classList.add('show');
-  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),t);
-}
-
-/********************
- * PROJ
- ********************/
-proj4.defs("EPSG:32717","+proj=utm +zone=17 +south +datum=WGS84 +units=m +no_defs");
-proj4.defs("EPSG:32718","+proj=utm +zone=18 +south +datum=WGS84 +units=m +no_defs");
-proj4.defs("EPSG:32719","+proj=utm +zone=19 +south +datum=WGS84 +units=m +no_defs");
-
-/********************
- * MAP
- ********************/
-const map=L.map('map',{maxZoom:22}).setView([-7.2,-78.5],8);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:22}).addTo(map);
-
-const inputLayer=new L.FeatureGroup().addTo(map);
-const intersectLayer=new L.FeatureGroup().addTo(map);
-const labelLayer=new L.FeatureGroup().addTo(map);
-
-/********************
- * DATOS
- ********************/
-let propietariosMap={};
-let inputPolygon=null;
-
-/********************
- * CARGA CSV / XLSX
- ********************/
-document.getElementById('btn-upload').onclick=()=>document.getElementById('file-input').click();
-document.getElementById('file-input').onchange=e=>{
-  const f=e.target.files[0]; if(!f) return;
-  if(/propiet/i.test(f.name)) return loadPropietarios(f);
-  const ext=f.name.split('.').pop().toLowerCase();
-  if(ext==='csv') loadCoordsCSV(f); else loadCoordsXLSX(f);
-};
-
-function loadCoordsCSV(file){
-  Papa.parse(file,{header:true,skipEmptyLines:true,complete:r=>{
-    const rows=r.data;
-    const pts=[];
-    rows.forEach(o=>{
-      const k=Object.keys(o);
-      const x=parseFloat(o[k[0]]); const y=parseFloat(o[k[1]]);
-      if(!isNaN(x)&&!isNaN(y)) pts.push([x,y]);
+  <div id="map"></div>
+  
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/shp-write@latest/shpwrite.js"></script>
+  
+  <script>
+    // Configuración del Mapa
+    const map = L.map('map', { 
+      center: [4.6097, -74.0817], // Centro de ejemplo (Bogotá, Colombia)
+      zoom: 6,
+      // Usar la proyección por defecto de Leaflet (Web Mercator, EPSG:3857)
+      // para que el cálculo planar sea correcto.
+      crs: L.CRS.EPSG3857 
     });
-    buildPolygonFromProjected(pts);
-  }});
-}
 
-function loadCoordsXLSX(file){
-  const rd=new FileReader();
-  rd.onload=e=>{
-    const wb=XLSX.read(e.target.result,{type:'binary'});
-    const ws=wb.Sheets[wb.SheetNames[0]];
-    const arr=XLSX.utils.sheet_to_json(ws,{header:1});
-    const pts=[];
-    arr.slice(1).forEach(r=>{
-      const x=parseFloat(r[0]); const y=parseFloat(r[1]);
-      if(!isNaN(x)&&!isNaN(y)) pts.push([x,y]);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 19
+    }).addTo(map);
+
+    // Grupos de capas
+    const drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+    const prediosLayer = new L.FeatureGroup();
+    map.addLayer(prediosLayer);
+
+    // Opciones de dibujo
+    const drawControl = new L.Control.Draw({
+      edit: {
+        featureGroup: drawnItems
+      },
+      draw: {
+        polygon: {
+          allowIntersection: false,
+          showArea: false
+        },
+        polyline: false,
+        circle: false,
+        marker: false,
+        rectangle: false,
+        circlemarker: false
+      }
     });
-    buildPolygonFromProjected(pts);
-  };
-  rd.readAsBinaryString(file);
-}
+    map.addControl(drawControl);
 
-/********************
- * POLÍGONO PLANAR
- ********************/
-function buildPolygonFromProjected(points){
-  inputLayer.clearLayers(); labelLayer.clearLayers(); intersectLayer.clearLayers();
-  if(points.length<3){ showStatus('Se requieren al menos 3 puntos','#c0392b'); return; }
+    // Almacenamiento de datos y estado
+    let propietariosMap = {};
+    let predios = []; // Lista para almacenar los GeoJSONs de los predios
+    let currentGeoJSON = null;
+    let currentLayer = null;
 
-  const crs=document.getElementById('crs-select').value;
-  const latlngs=[];
-  const projected=[];
+    // --- LÓGICA DE CÁLCULO DE ÁREA PLANAR (MODIFICADA) ---
+    
+    /**
+     * Calcula el área planar de un polígono en metros cuadrados (m²) 
+     * usando la proyección Web Mercator (EPSG:3857), la misma que usa el mapa.
+     * Esto se asemeja al cálculo de área de software GIS de escritorio.
+     * @param {object} geojson - Objeto GeoJSON de un polígono.
+     * @returns {number} Área en metros cuadrados.
+     */
+    function calculatePlanarArea(geojson) {
+      let area = 0;
+      // Asume un polígono simple, toma la primera matriz de coordenadas.
+      // Las coordenadas están en formato [lng, lat] (GeoJSON)
+      const coords = geojson.geometry.coordinates[0]; 
+      
+      // Obtener el CRS del mapa (L.CRS.EPSG3857 en metros)
+      const crs = map.options.crs;
+      
+      // Proyectar coordenadas LatLng a puntos planares (x, y en metros de Web Mercator)
+      const projectedCoords = coords.map(c => {
+        // c[1] = lat, c[0] = lng (GeoJSON format)
+        const latlng = L.latLng(c[1], c[0]); 
+        // L.Projection.Mercator.project() se usa internamente por crs.project()
+        return crs.project(latlng); 
+      });
 
-  points.forEach(p=>{
-    projected.push(p);
-    const ll=proj4('EPSG:'+crs,'EPSG:4326',p);
-    latlngs.push([ll[1],ll[0]]);
-  });
+      // Fórmula del cordón de zapato (Shoelace formula) para el cálculo de área planar
+      // Área = 0.5 * |sum((x_i * y_{i+1}) - (x_{i+1} * y_i))|
+      for (let i = 0, j = projectedCoords.length - 1; i < projectedCoords.length; j = i++) {
+        const p1 = projectedCoords[i];
+        const p2 = projectedCoords[j];
+        area += (p2.x + p1.x) * (p2.y - p1.y);
+      }
 
-  const poly=L.polygon(latlngs,{color:'#0056b3',fillOpacity:0.2}).addTo(inputLayer);
-  map.fitBounds(poly.getBounds().pad(0.15));
+      // El área resultante es en metros cuadrados (unidades de proyección)
+      return Math.abs(area / 2);
+    }
+    
+    /**
+     * Muestra el área calculada en el panel.
+     * @param {object} geojson - Objeto GeoJSON de un polígono.
+     */
+    function showArea(geojson){
+      // *** MODIFICACIÓN: Usar calculatePlanarArea para el cálculo planar ***
+      const area_m2 = calculatePlanarArea(geojson); 
+      
+      const hectareas = (area_m2 / 10000).toFixed(2);
+      const m2 = area_m2.toFixed(2);
+      document.getElementById('area-m2').innerText = m2;
+      document.getElementById('area-ha').innerText = hectareas;
+    }
 
-  // Área planar (shoelace)
-  let area=0;
-  for(let i=0,j=projected.length-1;i<projected.length;j=i++){
-    area+=(projected[j][0]+projected[i][0])*(projected[j][1]-projected[i][1]);
-  }
-  area=Math.abs(area/2); // m2
-  const areaHa=(area/10000).toFixed(3);
+    function clearArea(){
+      document.getElementById('area-m2').innerText = '0.00';
+      document.getElementById('area-ha').innerText = '0.00';
+    }
 
-  const c=poly.getBounds().getCenter();
-  L.marker(c,{icon:L.divIcon({className:'label-area',html:areaHa+' ha'})}).addTo(labelLayer);
+    // --- MANEJO DE EVENTOS DE DIBUJO ---
 
-  inputPolygon={
-    type:'Feature',
-    geometry:{type:'Polygon',coordinates:[projected.map(p=>proj4('EPSG:'+crs,'EPSG:4326',p))]},
-    properties:{area_ha:areaHa}
-  };
-
-  queryMIDAGRI();
-}
-
-/********************
- * MIDAGRI
- ********************/
-const midagri=L.esri.featureLayer({
-  url:'https://georural.midagri.gob.pe/geoservicios/rest/services/public/Catastro_Rural/MapServer/0'
-});
-
-function queryMIDAGRI(){
-  if(!inputPolygon) return;
-  midagri.query().intersects(inputPolygon).run((err,fc)=>{
-    if(err){ showStatus('Error MIDAGRI','#c0392b'); return; }
-    intersectLayer.clearLayers(); labelLayer.clearLayers();
-    const feats=fc.features||[];
-    if(!feats.length){ document.getElementById('tabla-inter').innerHTML='Sin intersección'; return; }
-
-    let html='<table><tr><th>cod_predio</th><th>Titular</th></tr>';
-
-    feats.forEach(f=>{
-      const p=f.properties||{};
-      const cod=String(p.cod_predio||p.COD_PREDIO||'').trim();
-      const titular=propietariosMap[cod]||'—';
-
-      L.geoJSON(f,{style:{color:'#27ae60',weight:2,fillOpacity:0.25}}).addTo(intersectLayer);
-      const cent=turf.centroid(f).geometry.coordinates;
-      L.marker([cent[1],cent[0]],{icon:L.divIcon({className:'etiqueta-predio',html:titular})}).addTo(labelLayer);
-
-      html+=`<tr><td>${cod}</td><td>${titular}</td></tr>`;
+    map.on(L.Draw.Event.CREATED, function (e) {
+      const layer = e.layer;
+      
+      // Solo permitimos un elemento dibujado a la vez
+      drawnItems.clearLayers();
+      
+      // Añadir la nueva capa dibujada
+      drawnItems.addLayer(layer);
+      
+      // Actualizar el GeoJSON actual y el Layer
+      currentLayer = layer;
+      currentGeoJSON = layer.toGeoJSON();
+      
+      // Calcular y mostrar el área (usando el cálculo planar modificado)
+      showArea(currentGeoJSON);
     });
-    html+='</table>';
-    document.getElementById('tabla-inter').innerHTML=html;
-    showStatus('Intersección completada');
-  });
-}
 
-/********************
- * PROPIETARIOS
- ********************/
-function loadPropietarios(file){
-  Papa.parse(file,{header:true,skipEmptyLines:true,complete:r=>{
-    propietariosMap={};
-    r.data.forEach(o=>{
-      const k=Object.keys(o);
-      const cod=String(o[k[0]]).trim();
-      const nom=String(o[k[1]]).trim();
-      if(cod) propietariosMap[cod]=nom;
+    map.on(L.Draw.Event.EDITED, function (e) {
+      // Si se editó algo, re-calcular el área para la capa actual
+      e.layers.eachLayer(function(layer) {
+        if(layer === currentLayer) {
+          currentGeoJSON = layer.toGeoJSON();
+          showArea(currentGeoJSON);
+        }
+      });
     });
-    showStatus('Propietarios cargados');
-  }});
-}
 
-/********************
- * LIMPIAR
- ********************/
-document.getElementById('btn-clear').onclick=()=>{
-  inputLayer.clearLayers(); intersectLayer.clearLayers(); labelLayer.clearLayers();
-  document.getElementById('tabla-inter').innerHTML='—';
-};
-</script>
+    map.on(L.Draw.Event.DELETED, function (e) {
+      // Si se eliminó la capa actual, limpiar el estado
+      e.layers.eachLayer(function(layer) {
+        if(layer === currentLayer) {
+          currentGeoJSON = null;
+          currentLayer = null;
+          clearArea();
+        }
+      });
+    });
+
+    // Limpiar mapa al hacer clic en el botón
+    document.getElementById('clear-map').addEventListener('click', () => {
+      drawnItems.clearLayers();
+      currentGeoJSON = null;
+      currentLayer = null;
+      clearArea();
+    });
+
+    // --- LÓGICA DE PROPIETARIOS Y PREDIO ---
+
+    function getPropietario(cod) {
+      if(!cod) return '';
+      const raw = String(cod).trim().replace(/^\"+|\"+$/g,'').replace(/^'+|'+$/g,'');
+      return propietariosMap[raw] ?? '';
+    }
+
+    function updateSugerencia(cod) {
+      const nombre = getPropietario(cod);
+      document.getElementById('sugerido').innerText = nombre || '(No encontrado o cargar CSV)';
+    }
+
+    document.getElementById('cod_predio').addEventListener('input', function(e) {
+      updateSugerencia(e.target.value);
+    });
+
+    document.getElementById('add-to-list').addEventListener('click', function() {
+      const cod_predio = document.getElementById('cod_predio').value.trim();
+      const observaciones = document.getElementById('observaciones').value.trim();
+      const messageEl = document.getElementById('message');
+
+      messageEl.innerText = '';
+
+      if (!currentGeoJSON) {
+        messageEl.innerText = 'Error: Primero debe dibujar un polígono en el mapa.';
+        return;
+      }
+      if (!cod_predio) {
+        messageEl.innerText = 'Error: El campo "Código Predio" no puede estar vacío.';
+        return;
+      }
+
+      const area_m2 = calculatePlanarArea(currentGeoJSON); 
+      const area_ha = (area_m2 / 10000).toFixed(2);
+      const nombre_titular = getPropietario(cod_predio) || 'N/A';
+      
+      // Copia del GeoJSON actual para guardar
+      const predioGeoJSON = JSON.parse(JSON.stringify(currentGeoJSON));
+      
+      // Agregar propiedades al GeoJSON
+      predioGeoJSON.properties = {
+        cod_predio: cod_predio,
+        nombre_titular: nombre_titular,
+        area_m2: area_m2.toFixed(2),
+        area_ha: area_ha,
+        observaciones: observaciones,
+        fecha_registro: new Date().toISOString().slice(0, 10)
+      };
+
+      // Limpiar datos y mapa
+      predios.push(predioGeoJSON);
+      drawnItems.clearLayers();
+      currentGeoJSON = null;
+      currentLayer = null;
+      document.getElementById('cod_predio').value = '';
+      document.getElementById('observaciones').value = '';
+      clearArea();
+      updateSugerencia('');
+
+      // Actualizar contador
+      document.getElementById('predios-count').innerText = predios.length;
+
+      // Opcional: Mostrar los predios guardados en un color diferente
+      const newLayer = L.geoJSON(predioGeoJSON, {
+        style: function (feature) {
+          return { color: "#2980b9", weight: 2, opacity: 0.65, fillColor: "#2980b9", fillOpacity: 0.2 };
+        }
+      }).addTo(prediosLayer);
+
+      messageEl.innerText = `Éxito: Predio ${cod_predio} de ${area_ha} ha registrado.`;
+    });
+
+    // --- LÓGICA DE CARGA DE ARCHIVOS ---
+
+    function detectDelimiterFromFileName(fileName){
+      if(/\.csv$/i.test(fileName)) return ',';
+      if(/\.txt$/i.test(fileName)) return ';';
+      return ',';
+    }
+
+    function loadPropietariosFromFile(file){
+      Papa.parse(file, { 
+        header:true, 
+        skipEmptyLines:true, 
+        delimiter: detectDelimiterFromFileName(file.name), 
+        complete: r=>{
+          propietariosMap = {};
+          (r.data||[]).forEach(row=>{
+            const lc = {};
+            // Normalizar las claves a minúsculas
+            Object.keys(row).forEach(k => lc[k.trim().toLowerCase()] = row[k]); 
+            
+            // Lógica flexible para encontrar 'nombre' y 'cod_predio'
+            const nombre = lc['nombre'] ?? lc['name'] ?? row[Object.keys(row)[1]] ?? '';
+            const cod = lc['cod_predio'] ?? lc['codpredio'] ?? lc['cod'] ?? row[Object.keys(row)[0]];
+            
+            if(!cod) return;
+            
+            // Limpieza del código: trim y quitar posibles comillas
+            const raw = String(cod).trim().replace(/^\"+|\"+$/g,'').replace(/^'+|'+$/g,''); 
+            
+            propietariosMap[raw] = String(nombre).trim();
+          });
+          document.getElementById('propietarios-count').innerText = Object.keys(propietariosMap).length;
+          alert(`Cargados ${Object.keys(propietariosMap).length} titulares.`);
+        },
+        error: (e) => {
+          alert(`Error al parsear el archivo: ${e.message}`);
+        }
+      });
+    }
+
+    // manual upload fallback for propietarios
+    function setupPropietariosUploadFallback(){
+      document.getElementById('file-input').addEventListener('change', function(e){
+        const file = e.target.files[0];
+        if(!file) return;
+        loadPropietariosFromFile(file);
+      });
+      // También manejar arrastrar y soltar en el panel de carga de titulares
+      const fileUploadArea = document.querySelector('.file-upload');
+      ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+          fileUploadArea.addEventListener(eventName, preventDefaults, false);
+      });
+      fileUploadArea.addEventListener('drop', handleDrop, false);
+    }
+    
+    function preventDefaults (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
+    function handleDrop(e) {
+      const dt = e.dataTransfer;
+      const files = dt.files;
+      if (files.length > 0) {
+        loadPropietariosFromFile(files[0]);
+      }
+    }
+
+
+    // --- LÓGICA DE DESCARGA ---
+
+    document.getElementById('download-csv').addEventListener('click', function() {
+      if(predios.length === 0) {
+        alert('No hay predios registrados para descargar.');
+        return;
+      }
+
+      // Convertir GeoJSON a una lista de objetos planos
+      const data = predios.map(f => ({
+        ...f.properties,
+        geojson_geometry: JSON.stringify(f.geometry)
+      }));
+
+      const csv = Papa.unparse(data);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", "predios_forestales.csv");
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+
+    document.getElementById('export-geojson').addEventListener('click', function() {
+      if(predios.length === 0) {
+        alert('No hay predios registrados para descargar.');
+        return;
+      }
+
+      const geojsonFeatureCollection = {
+        type: "FeatureCollection",
+        features: predios
+      };
+
+      const json = JSON.stringify(geojsonFeatureCollection);
+      const blob = new Blob([json], { type: 'application/json' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", "predios_forestales.geojson");
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+
+    document.getElementById('download-shp').addEventListener('click', function() {
+      if(predios.length === 0) {
+        alert('No hay predios registrados para descargar.');
+        return;
+      }
+      
+      // shp-write requiere un FeatureCollection
+      const geojsonFeatureCollection = {
+        type: "FeatureCollection",
+        features: predios
+      };
+
+      // Exportar a Shapefile (genera un zip)
+      shpwrite.download(geojsonFeatureCollection);
+    });
+
+    // Inicializar
+    setupPropietariosUploadFallback();
+    
+    // Alerta al cargar la página
+    alert('Bienvenido. Recuerde:\n1. Dibuje un polígono.\n2. Ingrese el código del predio (opcionalmente cargue el CSV de titulares).\n3. Pulse "Añadir a la lista".\n\nEl cálculo de área ahora es PLANAR (Web Mercator) para coincidir con QGIS/ArcGIS.');
+
+  </script>
 </body>
 </html>
