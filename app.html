@@ -175,7 +175,7 @@
   let inputPolygonFeature = null; 
   let propietariosMap = {};
 
-  // ---------- Draw control ----------
+  // ---------- Draw control (usa la nueva función de etiqueta) ----------
   const drawControl = new L.Control.Draw({
     draw:{ polygon:{allowIntersection:false,showArea:true,shapeOptions:{color:'#0b6b2b'}}, marker:true, polyline:false, rectangle:false, circle:false, circlemarker:false },
     edit:{ featureGroup:drawnItems, edit:true, remove:true }
@@ -273,16 +273,17 @@
         return Math.abs(area / 2); // Área en metros cuadrados
       } catch(e) {
           console.error(`Error al proyectar a EPSG:${final_crs}. Usando Turf Geodésico.`, e);
+          // Fallback a área geodésica si falla la proyección
           return turf.area(geojson);
       }
     } 
 
-    // Si no es un CRS UTM esperado, se usa el cálculo geodésico de Turf
+    // Si no es un CRS UTM esperado, se usa el cálculo geodésico de Turf (menos preciso)
     return turf.area(geojson);
   }
 
 
-  // ---------- Label area (MODIFICADA) ----------
+  // ---------- Label area (MODIFICADA para usar cálculo planar) ----------
   function addOrUpdateLabel(layer){
     try {
       const gj = layer.toGeoJSON();
@@ -369,7 +370,7 @@
     reader.readAsBinaryString(file);
   }
 
-  // ---------- Build polygon robustly and display (MODIFICADA) ----------
+  // ---------- Build polygon robustly and display (MODIFICADA para cálculo planar) ----------
   function handleRows(rows, crs, isArray=false){
     uploadedLayer.clearLayers(); intersectLayer.clearLayers(); labelLayer.clearLayers(); intersectFeatures = []; inputPolygonFeature = null; document.getElementById('tabla-inter').innerHTML = "Procesando...";
     const pointsLatLon = [];
@@ -414,6 +415,7 @@
 
     // MODIFICACIÓN CLAVE: Usar calculatePlanarArea con el CRS seleccionado (crs)
     try { 
+        // Si el CRS es '4326', calculatePlanarArea lo detectará y usará la zona dinámica, pero si es '327xx', lo usará directamente para el cálculo planar.
         gj.properties.area_ha = parseFloat((calculatePlanarArea(gj, crs) / 10000).toFixed(2)); 
     } catch(e){ 
         console.error("Error al calcular área planar de entrada:", e);
@@ -434,40 +436,11 @@
     saveSession();
   }
 
-  // ---------- AGREGAR VÉRTICE GPS (MODIFICADA) ----------
-  document.getElementById('btn-gps-vertex').onclick = () => {
-    if(!gpsMarker) return alert('Activa el GPS primero.');
-    const acc = gpsMarker.accuracy || 999;
-    if(acc>7 && !confirm(`Precisión baja (${acc.toFixed(1)} m). ¿Agregar vértice igualmente?`)) return;
-    const p = gpsMarker.getLatLng();
-    gpsVertices.push([p.lat,p.lng]);
-    L.circleMarker(p,{radius:5,color:'#0b6b2b',fillColor:'#0b6b2b',fillOpacity:1}).addTo(gpsLayer);
-    
-    if(gpsVertices.length>=3){
-      if(!activePolygon) activePolygon = L.polygon(gpsVertices, { color:'#0b6b2b', fillOpacity:0.12 }).addTo(gpsLayer);
-      else activePolygon.setLatLngs(gpsVertices);
-      
-      // La función addOrUpdateLabel internamente usa calculatePlanarArea(gj, null) (CRS dinámico)
-      addOrUpdateLabel(activePolygon);
-      
-      const coordsLonLat = gpsVertices.map(pp => [pp[1], pp[0]]);
-      if(coordsLonLat[0][0] !== coordsLonLat[coordsLonLat.length-1][0] || coordsLonLat[0][1] !== coordsLonLat[coordsLonLat.length-1][1]) coordsLonLat.push(coordsLonLat[0]);
-      
-      inputPolygonFeature = { type:'Feature', properties:{}, geometry:{ type:'Polygon', coordinates:[coordsLonLat] } };
-      // MODIFICACIÓN: Usar cálculo planar (CRS dinámico - null)
-      inputPolygonFeature.properties.area_ha = parseFloat((calculatePlanarArea(inputPolygonFeature, null)/10000).toFixed(3));
-      
-      try { checkIntersection(inputPolygonFeature); } catch(e){}
-    }
-    
-    saveSession();
-  };
-
   // ---------- MIDAGRI FeatureLayer ----------
   const MIDAGRI_LAYER_URL = 'https://georural.midagri.gob.pe/geoservicios/rest/services/public/Catastro_Rural/MapServer/0';
   const midagriLayer = L.esri.featureLayer({ url: MIDAGRI_LAYER_URL });
 
-  // ---------- Intersection: paint and store features + etiquetas (MODIFICADA) ----------
+  // ---------- Intersection: paint and store features + etiquetas (MODIFICADA para cálculo planar) ----------
   function checkIntersection(geojsonFeature){
     try {
       if(!geojsonFeature) return;
@@ -498,8 +471,9 @@
           // MODIFICACIÓN: Usar cálculo planar (CRS dinámico - null) como fallback si el área de la feature no existe o es 0
           let area_ha_calc;
           if (props.AREA && Number(props.AREA) > 0) {
-              area_ha_calc = (Number(props.AREA) / 10000).toFixed(3);
+              area_ha_calc = (Number(props.AREA) / 10000).toFixed(3); // Área de la fuente (ArcGIS)
           } else {
+              // Calcular planar si AREA no existe o es 0
               area_ha_calc = (calculatePlanarArea(f, null) / 10000).toFixed(3); 
           }
 
@@ -569,34 +543,42 @@
     }
     return null;
   }
+  
+  // ---------- Render table (MODIFICADA para mostrar área planar) ----------
   function renderTable(features){
     const div = document.getElementById('tabla-inter');
     if(!features || features.length === 0){ div.innerHTML = "<div class='small'>No hay predios intersectados.</div>"; return; }
+    
     const allKeys = new Set();
     features.forEach(f => { Object.keys(f.properties || {}).forEach(k => allKeys.add(k)); });
+    
+    // Add columns for calculated area and titular
     const keys = Array.from(allKeys);
+    if(!keys.includes('AREA_HA_ORIGEN')) keys.push('AREA_HA_ORIGEN');
+    if(!keys.includes('AREA_HA_PLANAR')) keys.push('AREA_HA_PLANAR'); // New calculated planar area column
     if(!keys.includes('TITULAR_CSV')) keys.push('TITULAR_CSV');
+
     let html = "<table><thead><tr>";
-    keys.forEach(k => html += `<th>${k}</th>`);
+    keys.forEach(k => html += `<th>${k.replace('AREA_HA_PLANAR', 'ÁREA PLANAR (HA)').replace('AREA_HA_ORIGEN', 'ÁREA ORIGEN (HA)').replace('TITULAR_CSV', 'TITULAR (CSV)')}</th>`);
     html += "</tr></thead><tbody>";
+    
     features.forEach(f => {
       const props = f.properties || {};
       const titular = findTitularForFeature(collectCandidateKeysFromFeature(props)) || '';
-      // Recalcular área para la tabla si es necesario
-      let area_ha_calc;
-      if (props.AREA && Number(props.AREA) > 0) {
-          area_ha_calc = (Number(props.AREA) / 10000).toFixed(3);
-      } else {
-          area_ha_calc = (calculatePlanarArea(f, null) / 10000).toFixed(3); 
-      }
+      
+      // Recalcular área planar para la tabla
+      const area_planar_calc = (calculatePlanarArea(f, null) / 10000).toFixed(3); 
       
       html += "<tr>";
       keys.forEach(k => {
           let value = '';
           if (k === 'TITULAR_CSV') {
               value = titular;
-          } else if (k === 'AREA_HA_CALCULADA') { // Agregar columna calculada si es necesario
-              value = area_ha_calc;
+          } else if (k === 'AREA_HA_PLANAR') {
+              value = area_planar_calc;
+          } else if (k === 'AREA_HA_ORIGEN') {
+              // Area from service properties, if available
+              value = props.AREA ? (Number(props.AREA) / 10000).toFixed(3) : 'N/A';
           } else {
               value = (props && props[k]) ? String(props[k]) : '';
           }
@@ -608,17 +590,16 @@
     div.innerHTML = html;
   }
   
-  // ---------- Downloads (MODIFICADA) ----------
+  // ---------- Downloads (MODIFICADA para incluir área planar) ----------
   document.getElementById('btn-download-midagri-geo').onclick = () => {
     if(!intersectFeatures || intersectFeatures.length === 0){ showStatus('No hay predios para descargar','#d9534f'); return; }
     const fc = { type:'FeatureCollection', features: intersectFeatures.map(f => {
         const new_f = JSON.parse(JSON.stringify(f));
         // Asegurar que el área calculada planar esté en las propiedades
         new_f.properties = new_f.properties || {};
-        if (!new_f.properties.AREA || Number(new_f.properties.AREA) === 0) {
-            new_f.properties.AREA_PLANAR_M2 = calculatePlanarArea(f, null).toFixed(2);
-            new_f.properties.AREA_PLANAR_HA = (Number(new_f.properties.AREA_PLANAR_M2) / 10000).toFixed(3);
-        }
+        const planar_m2 = calculatePlanarArea(f, null).toFixed(2);
+        new_f.properties.AREA_PLANAR_M2 = planar_m2;
+        new_f.properties.AREA_PLANAR_HA = (Number(planar_m2) / 10000).toFixed(3);
         return new_f;
     })};
     const blob = new Blob([JSON.stringify(fc)], { type:'application/geo+json' });
@@ -634,18 +615,13 @@
       const titular = findTitularForFeature(collectCandidateKeysFromFeature(p)) || p.TITULAR || p.NOMBRE || '';
       
       // MODIFICACIÓN: Usar cálculo planar (CRS dinámico)
-      let area_ha_calc;
-      if (p.AREA && Number(p.AREA) > 0) {
-          area_ha_calc = (Number(p.AREA) / 10000).toFixed(3);
-      } else {
-          area_ha_calc = (calculatePlanarArea(f, null) / 10000).toFixed(3); 
-      }
+      const area_planar_calc = (calculatePlanarArea(f, null) / 10000).toFixed(3); 
       
       return {
         ID: p.OBJECTID || p.ID || p.OBJECTID_1 || "",
         COD_PREDIO: p.cod_predio || p.COD_PREDIO || '',
         AREA_HA_ORIGEN: p.AREA ? (Number(p.AREA)/10000).toFixed(3) : 'N/A',
-        AREA_HA_PLANAR: area_ha_calc, // Área calculada con precisión UTM
+        AREA_HA_PLANAR: area_planar_calc, // Área calculada con precisión UTM
         DEPARTAMENTO: p.DEPARTAMEN || p.DEPARTAMENTO || "",
         PROVINCIA: p.PROVINCIA || "",
         DISTRITO: p.DISTRITO || "",
@@ -659,7 +635,7 @@
     showStatus('✅ CSV descargado');
   };
 
-  // ---------- Download input polygon (MODIFICADA) ----------
+  // ---------- Download input polygon (MODIFICADA para asegurar el área planar) ----------
   document.getElementById('btn-download-input-geo').onclick = () => {
     if(!inputPolygonFeature){ showStatus('No hay polígono de entrada','#d9534f'); return; }
     const gj = JSON.parse(JSON.stringify(inputPolygonFeature));
@@ -667,10 +643,9 @@
     // El área ya fue calculada de forma planar en handleRows o gps-vertex
     if (!gj.properties.area_ha) {
         // Fallback: calcular planar con el CRS guardado o dinámico (null)
-        const crs = gj.properties.input_crs || null;
+        const crs = gj.properties.input_crs || null; 
         gj.properties.area_ha = parseFloat((calculatePlanarArea(gj, crs)/10000).toFixed(2));
     }
-
     const blob = new Blob([JSON.stringify(gj)], { type:'application/geo+json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = 'poligono_entrada.geojson'; a.click(); URL.revokeObjectURL(url);
@@ -683,6 +658,35 @@
     map.fitBounds(intersectLayer.getBounds().pad(0.15));
   };
   
+  // ---------- AGREGAR VÉRTICE GPS (MODIFICADA para usar cálculo planar) ----------
+  document.getElementById('btn-gps-vertex').onclick = () => {
+    if(!gpsMarker) return alert('Activa el GPS primero.');
+    const acc = gpsMarker.accuracy || 999;
+    if(acc>7 && !confirm(`Precisión baja (${acc.toFixed(1)} m). ¿Agregar vértice igualmente?`)) return;
+    const p = gpsMarker.getLatLng();
+    gpsVertices.push([p.lat,p.lng]);
+    L.circleMarker(p,{radius:5,color:'#0b6b2b',fillColor:'#0b6b2b',fillOpacity:1}).addTo(gpsLayer);
+    
+    if(gpsVertices.length>=3){
+      if(!activePolygon) activePolygon = L.polygon(gpsVertices, { color:'#0b6b2b', fillOpacity:0.12 }).addTo(gpsLayer);
+      else activePolygon.setLatLngs(gpsVertices);
+      
+      // La función addOrUpdateLabel internamente usa calculatePlanarArea(gj, null) (CRS dinámico)
+      addOrUpdateLabel(activePolygon);
+      
+      const coordsLonLat = gpsVertices.map(pp => [pp[1], pp[0]]);
+      if(coordsLonLat[0][0] !== coordsLonLat[coordsLonLat.length-1][0] || coordsLonLat[0][1] !== coordsLonLat[coordsLonLat.length-1][1]) coordsLonLat.push(coordsLonLat[0]);
+      
+      inputPolygonFeature = { type:'Feature', properties:{}, geometry:{ type:'Polygon', coordinates:[coordsLonLat] } };
+      // MODIFICACIÓN: Usar cálculo planar (CRS dinámico - null)
+      inputPolygonFeature.properties.area_ha = parseFloat((calculatePlanarArea(inputPolygonFeature, null)/10000).toFixed(3));
+      
+      try { checkIntersection(inputPolygonFeature); } catch(e){}
+    }
+    
+    saveSession();
+  };
+
   // ---------- Cargar CSV de propietarios (mantido) ----------
   function loadPropietariosCSVFromRepo(){
     const repoPath = 'data/propietarios.csv';
