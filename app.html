@@ -25,20 +25,25 @@
 
     .infoBox { background:#fff; padding:8px 10px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.06); font-size:13px; text-align:left; }
     .small { font-size:12px; color:#444; }
-    #map { flex:1; height:100vh; }
+    #map { flex:1; height:100vh; z-index: 1; }
 
     .legend { display:flex; gap:8px; align-items:center; font-size:12px; margin-top:6px; flex-wrap:wrap; }
     .dot { width:12px; height:12px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,0.1); }
     .label { background: rgba(255,255,255,0.95); padding:4px 6px; border-radius:6px; border:1px solid #ddd; font-size:12px; font-weight:600; }
 
-    /* Estilo para etiquetas de vértices */
+    /* ESTILO MEJORADO PARA ETIQUETAS DE VÉRTICES */
     .vertex-label {
-      background: rgba(255,255,255,0.8);
-      border: 1px solid #666;
-      border-radius: 3px;
-      padding: 1px 3px;
-      font-size: 10px;
+      background: #ffffff;
+      border: 2px solid #0b6b2b;
+      border-radius: 50%;
+      color: #0b6b2b;
+      font-size: 11px;
+      font-weight: bold;
+      text-align: center;
+      line-height: 18px; /* Centrado vertical */
+      box-shadow: 1px 1px 3px rgba(0,0,0,0.3);
       white-space: nowrap;
+      z-index: 1000 !important; /* Asegura visibilidad sobre otros elementos */
     }
 
     .etiqueta-predio {
@@ -51,6 +56,7 @@
       white-space: nowrap;
       pointer-events: none;
       box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+      z-index: 900;
     }
 
     #status-msg {
@@ -173,8 +179,9 @@
   const trackLayer = L.polyline([], { color:'red', weight:3 }).addTo(map);
   const intersectLayer = new L.FeatureGroup().addTo(map);
   const labelLayer = new L.FeatureGroup().addTo(map);
-  // Capa específica para etiquetas de vértices (mantiene el mapa limpio al borrar)
-  const vertexLabelLayer = new L.FeatureGroup().addTo(map);
+  
+  // Capa dedicada para etiquetas de vértices (Garantiza que se puedan borrar independientemente)
+  const vertexLabelLayer = new L.LayerGroup().addTo(map);
 
   let gpsMarker=null, accuracyCircle=null, watchId=null;
   let gpsVertices=[], trackCoords=[];
@@ -184,26 +191,32 @@
   let inputPolygonFeature = null; 
   let propietariosMap = {};
 
-  // ---------- LOGICA ETIQUETAS DE VERTICES (NUEVA FUNCIÓN) ----------
+  // ---------- NUEVA LÓGICA DE ETIQUETADO PARA GITHUB ----------
   /**
-   * Crea etiquetas numéricas para cada vértice del polígono.
-   * Se invoca tanto en carga de Excel como en dibujo manual/GPS.
+   * Crea etiquetas numéricas 1, 2, 3... en cada vértice.
+   * Se agregó un pequeño retardo (setTimeout) para asegurar que en entornos web (GitHub) 
+   * el mapa haya terminado de posicionar el polígono antes de colocar los DivIcons.
    */
   function addVertexLabels(latlngs) {
     vertexLabelLayer.clearLayers();
-    // latlngs puede ser un array simple o array de arrays (Leaflet Polygon)
-    const points = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
-    points.forEach((ll, index) => {
-      // Evitar duplicar etiqueta en el último punto si es igual al primero
-      if (index === points.length - 1 && points.length > 1) {
-          const first = points[0];
-          const last = points[points.length - 1];
-          if (first.lat === last.lat && first.lng === last.lng) return;
-      }
+    // Normalizar latlngs (Leaflet puede devolver arrays anidados)
+    let points = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
+    
+    // Si el último punto es igual al primero (polígono cerrado), no etiquetamos el duplicado
+    let displayPoints = [...points];
+    if (displayPoints.length > 1) {
+        const first = displayPoints[0];
+        const last = displayPoints[displayPoints.length - 1];
+        if (first.lat === last.lat && first.lng === last.lng) {
+            displayPoints.pop();
+        }
+    }
+
+    displayPoints.forEach((ll, index) => {
       L.marker(ll, {
         icon: L.divIcon({
           className: 'vertex-label',
-          html: `${index + 1}`,
+          html: (index + 1).toString(),
           iconSize: [20, 20],
           iconAnchor: [10, 10]
         }),
@@ -212,7 +225,7 @@
     });
   }
 
-  // ---------- Draw control ----------
+  // ---------- DRAW CONTROL ----------
   const drawControl = new L.Control.Draw({
     draw:{ polygon:{allowIntersection:false,showArea:true,shapeOptions:{color:'#0b6b2b'}}, marker:true, polyline:false, rectangle:false, circle:false, circlemarker:false },
     edit:{ featureGroup:drawnItems, edit:true, remove:true }
@@ -223,7 +236,7 @@
     drawnItems.addLayer(e.layer);
     if(e.layer instanceof L.Polygon){ 
       addOrUpdateLabel(e.layer); 
-      addVertexLabels(e.layer.getLatLngs()); // Agregado para dibujo manual
+      addVertexLabels(e.layer.getLatLngs()); 
       try { checkIntersection(e.layer.toGeoJSON()); } catch(e){} 
     }
     saveSession();
@@ -233,7 +246,7 @@
     e.layers.eachLayer(l=>{ 
       if(l instanceof L.Polygon){ 
         addOrUpdateLabel(l); 
-        addVertexLabels(l.getLatLngs()); // Agregado para actualización en edición
+        addVertexLabels(l.getLatLngs()); 
         try { checkIntersection(l.toGeoJSON()); } catch(e){} 
       } 
     });
@@ -242,11 +255,11 @@
 
   map.on(L.Draw.Event.DELETED,()=>{ 
     clearAllLabels(); 
-    vertexLabelLayer.clearLayers(); 
+    vertexLabelLayer.clearLayers();
     saveSession(); 
   });
 
-  // ---------- LÓGICA DE DETERMINACIÓN DE ZONA UTM ----------
+  // ---------- UTM ZONES ----------
   function getUtmZone(lon) {
     if (lon >= -84 && lon < -80) return '32717';
     if (lon >= -80 && lon < -72) return '32718';
@@ -254,7 +267,6 @@
     return '32718';
   }
 
-  // ---------- FUNCIÓN PARA CÁLCULO DE ÁREA PLANAR (UTM) ----------
   function calculatePlanarArea(geojson, target_crs_code = null) {
     if (!geojson || !geojson.geometry || geojson.geometry.type !== 'Polygon') return 0;
     let final_crs = target_crs_code;
@@ -283,7 +295,6 @@
     return turf.area(geojson);
   }
 
-  // ---------- Label area (Centroide) ----------
   function addOrUpdateLabel(layer){
     try {
       const gj = layer.toGeoJSON();
@@ -324,7 +335,7 @@
   function colorForPrecision(acc){ if(acc<=5) return '#2ecc71'; if(acc<=7) return '#f1c40f'; return '#e74c3c'; }
   function distanceMeters(a,b){ const R=6371000,rad=Math.PI/180; const dLat=(b[0]-a[0])*rad,dLon=(b[1]-a[1])*rad; const lat1=a[0]*rad,lat2=b[0]*rad; const hav=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2; return 2*R*Math.asin(Math.sqrt(hav)); }
 
-  // ---------- UPLOAD ----------
+  // ---------- UPLOAD EXCEL / CSV ----------
   document.getElementById('btn-upload').onclick = ()=> document.getElementById('file-input').click();
   document.getElementById('file-input').onchange = e => {
     const file = e.target.files[0]; if(!file) return;
@@ -364,12 +375,13 @@
     reader.readAsBinaryString(file);
   }
 
-  // ---------- HANDLE ROWS (MODIFICADA CON LA LÓGICA DE ETIQUETAS) ----------
   function handleRows(rows, crs){
-    uploadedLayer.clearLayers(); 
+    // Limpiar capas previas
+    drawnItems.clearLayers();
     intersectLayer.clearLayers(); 
     labelLayer.clearLayers(); 
-    vertexLabelLayer.clearLayers(); // Limpiar etiquetas previas
+    vertexLabelLayer.clearLayers(); 
+    
     intersectFeatures = []; 
     inputPolygonFeature = null; 
     document.getElementById('tabla-inter').innerHTML = "Procesando...";
@@ -387,11 +399,10 @@
       return;
     }
 
-    // Dibujar polígono y agregarlo a drawnItems para que sea editable
     const poly = L.polygon(pointsLatLon, { color:'#0b6b2b', fillOpacity:0.15 });
     drawnItems.addLayer(poly); 
 
-    // AGREGADO: Generar etiquetas de vértices inmediatamente
+    // LLAMADA CLAVE: Se activa el etiquetado de los vértices cargados
     addVertexLabels(poly.getLatLngs());
     addOrUpdateLabel(poly);
 
@@ -498,7 +509,7 @@
           activePolygon.setLatLngs(gpsVertices);
       }
       addOrUpdateLabel(activePolygon);
-      addVertexLabels(activePolygon.getLatLngs()); // Etiquetas para polígono GPS
+      addVertexLabels(activePolygon.getLatLngs());
       const coords = gpsVertices.map(pp => [pp[1], pp[0]]);
       coords.push(coords[0]);
       inputPolygonFeature = { type:'Feature', properties:{}, geometry:{ type:'Polygon', coordinates:[coords] } };
