@@ -2,128 +2,502 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>Ingreso — Plantaciones Forestales BPS</title>
+  <title>Registro Plantaciones Forestales BPS — Con Titulares (cod_predio)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <style>
-    html, body {
-      height:100%; margin:0; font-family: Arial, sans-serif;
-      background:#f7f7f7; overflow:hidden;
+    html, body { height:100%; margin:0; font-family: Arial, sans-serif; }
+    body { display:flex; }
+    #panel { width: 360px; min-width: 300px; max-width: 420px; background: #f7f7f7; display:flex; flex-direction:column; border-right:1px solid #e6e6e6; padding-bottom:8px; box-sizing:border-box; }
+    header { background: linear-gradient(90deg,#0b6b2b,#008000); color:white; padding:12px; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
+    header h1 { margin:0; font-size:15px; }
+    header p { margin:6px 0 0 0; font-size:12px; opacity:0.95; }
+
+    .toolbar { display:flex; gap:6px; padding:10px; background:#fff; align-items:center; border-bottom:1px solid #e6e6e6; flex-wrap:wrap; }
+    .toolbar button, .toolbar select, .toolbar input[type="file"] {
+      background:white; border:1px solid #d0d0d0; padding:8px 10px; border-radius:8px;
+      cursor:pointer; display:flex; gap:6px; align-items:center; font-size:13px;
+    }
+    .toolbar button.primary { background:#0b6b2b; color:white; border-color:#0b6b2b; }
+    .controls { padding:10px; display:flex; flex-direction:column; gap:8px; }
+
+    .infoBox { background:#fff; padding:8px 10px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.06); font-size:13px; text-align:left; }
+    .small { font-size:12px; color:#444; }
+    #map { flex:1; height:100vh; }
+
+    .legend { display:flex; gap:8px; align-items:center; font-size:12px; margin-top:6px; flex-wrap:wrap; }
+    .dot { width:12px; height:12px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,0.1); }
+
+    /* ============================================================
+       MEJORA DEL HALO Y ETIQUETAS (CORRECCIÓN SOLICITADA)
+       ============================================================ */
+    .label { 
+      background: rgba(255,255,255,0.9); 
+      padding: 4px 8px; 
+      border-radius: 4px; 
+      border: 1px solid #666; 
+      font-size: 11px; 
+      font-weight: bold; 
+      white-space: nowrap; /* Evita que el texto se rompa en líneas */
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      color: #333;
+      display: inline-block;
     }
 
-    /* ---- Splash ---- */
-    #splash {
-      position:fixed; inset:0; background:white;
-      display:flex; flex-direction:column; justify-content:center; align-items:center;
-      z-index:9999; animation:fadeOut 1s ease-out 3s forwards;
-    }
-    #splash img {
-      width:130px; animation:zoomIn 1.2s ease-in-out;
-    }
-    #splash h1 {
-      margin-top:15px; color:#0b6b2b; font-size:18px; letter-spacing:1px;
-      animation:fadeIn 2s ease-in;
-    }
-
-    @keyframes zoomIn {
-      from { transform:scale(0.6); opacity:0; }
-      to { transform:scale(1); opacity:1; }
-    }
-    @keyframes fadeIn {
-      from { opacity:0; }
-      to { opacity:1; }
-    }
-    @keyframes fadeOut {
-      to { opacity:0; visibility:hidden; }
+    .etiqueta-predio {
+      background: rgba(255,255,255,0.95);
+      border: 1px solid #2c3e50;
+      padding: 3px 6px;
+      font-size: 11px;
+      font-weight: 700;
+      border-radius: 3px;
+      white-space: nowrap; /* Mantiene el nombre en una sola línea */
+      pointer-events: none;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      color: #2c3e50;
+      display: inline-block;
     }
 
-    /* ---- Login ---- */
-    #login-container, #app-container {
-      height:100%; width:100%;
-      display:flex; justify-content:center; align-items:center;
+    /* Estilo para etiquetas de vértices (Números) */
+    .vertex-label {
+      background: #444;
+      color: white;
+      border-radius: 50%;
+      width: 18px;
+      height: 18px;
+      font-size: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid white;
+      font-weight: bold;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
     }
-    #login-box {
-      background:white; padding:30px; border-radius:12px;
-      box-shadow:0 4px 12px rgba(0,0,0,0.15);
-      width:300px; text-align:center;
-    }
-    #login-box h2 { color:#0b6b2b; margin-bottom:20px; }
-    input {
-      width:100%; padding:10px; margin:8px 0;
-      border:1px solid #ccc; border-radius:8px; font-size:14px;
-    }
-    button {
-      width:100%; padding:10px; background:#0b6b2b; color:white;
-      border:none; border-radius:8px; cursor:pointer; font-weight:bold;
-    }
-    button:hover { background:#097326; }
-    small { color:#999; font-size:12px; }
 
-    /* ---- App ---- */
-    #app-container {
-      display:none; flex-direction:column; height:100%;
-      position:relative;
+    #status-msg {
+      position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+      background: rgba(11,107,43,0.95); color: white; padding: 8px 16px;
+      border-radius: 20px; font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      opacity: 0; transition: opacity 0.35s ease-in-out; z-index: 99999;
     }
+    #status-msg.show { opacity: 1; }
+
+    #results { padding:10px; overflow:auto; max-height:40vh; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { border:1px solid #e6e6e6; padding:6px; text-align:left; }
+    th { background:#f0f0f0; font-weight:700; }
   </style>
 </head>
 <body>
 
-  <!-- 🌱 Splash -->
-  <div id="splash">
-    <img src="logo_profesional.png" alt="Logo BPS">
-    <h1>Plantaciones Forestales BPS</h1>
-  </div>
+  <div id="panel">
+    <header>
+      <h1>🌳 Registro Plantaciones Forestales BPS — Victor E. Mendoza A.</h1>
+      <p>Especialista en Gestión del Catastro Forestal - BPS</p>
+    </header>
 
-  <!-- 🔐 Login -->
-  <div id="login-container">
-    <div id="login-box">
-      <h2>Acceso BPS</h2>
-      <input type="text" id="user" placeholder="Usuario" autocomplete="off">
-      <input type="password" id="pass" placeholder="Contraseña">
-      <button id="btn-login">Ingresar</button>
-      <p><small>Plantaciones Forestales BPS © 2025</small></p>
+    <div class="toolbar" style="justify-content:flex-start;">
+      <button id="btn-gps"><i class="fa-solid fa-location-dot"></i>&nbsp;Activar GPS</button>
+      <button id="btn-gps-vertex" class="primary"><i class="fa-solid fa-crosshairs"></i>&nbsp;Agregar vértice GPS</button>
+    </div>
+
+    <div class="controls">
+      <div class="infoBox">
+        <div class="small">Cargar Excel / CSV con coordenadas</div>
+        <div style="display:flex;gap:6px;margin-top:8px;">
+          <label style="flex:1;">
+            <input id="file-input" type="file" accept=".csv,.xlsx" style="display:none"/>
+            <button id="btn-upload" style="width:100%;"><i class="fa-solid fa-file-import"></i>&nbsp;Cargar CSV / Excel</button>
+          </label>
+        </div>
+
+        <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
+          <label class="small">CRS entrada:</label>
+          <select id="crs-select" style="flex:1;">
+            <option value="4326">EPSG:4326 (Lat/Lon)</option>
+            <option value="32717">EPSG:32717 (UTM 17S)</option>
+            <option value="32718" selected>EPSG:32718 (UTM 18S)</option>
+            <option value="32719">EPSG:32719 (UTM 19S)</option>
+          </select>
+        </div>
+
+        <div class="legend" style="margin-top:10px;">
+          <div><span class="dot" style="background:#2ecc71"></span><small>&nbsp;&lt;5m</small></div>
+          <div><span class="dot" style="background:#f1c40f"></span><small>&nbsp;5-7m</small></div>
+          <div><span class="dot" style="background:#e74c3c"></span><small>&nbsp;&gt;7m</small></div>
+        </div>
+
+        <div style="margin-top:10px;display:flex;gap:6px;">
+          <button id="btn-download-input-geo" title="Descargar polígono de entrada"><i class="fa-solid fa-download"></i>&nbsp;Descargar polígono</button>
+          <button id="btn-clear"><i class="fa-solid fa-trash"></i>&nbsp;Limpiar</button>
+        </div>
+
+        <div style="margin-top:8px;" class="small">
+          <div id="info-precision">📡 Precisión: -- m</div>
+        </div>
+      </div>
+
+      <div class="infoBox" style="display:flex;flex-direction:column;gap:6px;">
+        <div class="small"><b>Resultados MIDAGRI (Predio Rural)</b></div>
+        <div style="display:flex;gap:6px;">
+          <button id="btn-download-midagri-geo" style="flex:1;"><i class="fa-solid fa-map"></i>&nbsp;GeoJSON</button>
+          <button id="btn-download-midagri-csv" style="flex:1;"><i class="fa-solid fa-file-csv"></i>&nbsp;CSV</button>
+        </div>
+        <div style="margin-top:6px;">
+          <button id="btn-zoom-intersect" style="width:100%;"><i class="fa-solid fa-search-location"></i>&nbsp;Zoom a intersectados</button>
+        </div>
+      </div>
+
+      <div id="results" class="infoBox">
+        <div class="small"><b>Predios intersectados</b></div>
+        <div id="tabla-inter" style="margin-top:8px;">No hay resultados.</div>
+      </div>
     </div>
   </div>
 
-  <!-- 🌳 App -->
-  <div id="app-container">
-    <iframe id="map-frame" src="app.html" style="width:100%;height:100%;border:none;"></iframe>
-  </div>
+  <div id="map"></div>
+
+  <div id="status-msg" role="status" aria-live="polite"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+  <script src="https://unpkg.com/esri-leaflet@3.0.11/dist/esri-leaflet.js"></script>
 
   <script>
-    // --- Credenciales ---
-    const USER = "bps";
-    const PASS = "forestal2025";
+  // ---------- UTIL UI ----------
+  function showStatus(msg, color="#0b6b2b", timeout=2500){
+    const el = document.getElementById('status-msg');
+    el.style.background = color;
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(el._t);
+    el._t = setTimeout(()=> el.classList.remove('show'), timeout);
+  }
 
-    const splash = document.getElementById("splash");
-    const loginBox = document.getElementById("login-container");
-    const appBox = document.getElementById("app-container");
+  // ---------- PROJS (DEFINICIONES UTM) ----------
+  proj4.defs("EPSG:32717","+proj=utm +zone=17 +south +datum=WGS84 +units=m +no_defs");
+  proj4.defs("EPSG:32718","+proj=utm +zone=18 +south +datum=WGS84 +units=m +no_defs");
+  proj4.defs("EPSG:32719","+proj=utm +zone=19 +south +datum=WGS84 +units=m +no_defs");
 
-    // Ocultar splash después de animación
-    setTimeout(() => {
-      splash.style.display = "none";
-      if (localStorage.getItem("bpsAuth") === "true") showApp();
-    }, 4000);
+  // ---------- MAP, CAPAS ----------
+  const map = L.map('map', { zoomControl:true, maxZoom: 30}).setView([-7.2, -78.5], 8);
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
+  const googleSat = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',{attribution:'© Google'});
+  L.control.layers({"OSM":osm,"Google Satélite":googleSat}).addTo(map);
 
-    document.getElementById("btn-login").onclick = () => {
-      const u = document.getElementById("user").value.trim();
-      const p = document.getElementById("pass").value.trim();
-      if (u === USER && p === PASS) {
-        localStorage.setItem("bpsAuth", "true");
-        showApp();
-      } else {
-        alert("❌ Usuario o contraseña incorrectos");
-      }
-    };
+  const gpsLayer = new L.FeatureGroup().addTo(map);
+  const uploadedLayer = new L.FeatureGroup().addTo(map);
+  const drawnItems = new L.FeatureGroup().addTo(map);
+  const trackLayer = L.polyline([], { color:'red', weight:3 }).addTo(map);
+  const intersectLayer = new L.FeatureGroup().addTo(map);
+  const labelLayer = new L.FeatureGroup().addTo(map);
+  const vertexLabelLayer = new L.FeatureGroup().addTo(map); 
 
-    function showApp() {
-      loginBox.style.display = "none";
-      appBox.style.display = "flex";
+  let gpsMarker=null, accuracyCircle=null, watchId=null;
+  let gpsVertices=[], trackCoords=[];
+  let activePolygon=null, lastTrackPoint=null;
+  const infoPrecision=document.getElementById('info-precision');
+  let intersectFeatures = []; 
+  let inputPolygonFeature = null; 
+  let propietariosMap = {};
+
+  // ---------- Draw control ----------
+  const drawControl = new L.Control.Draw({
+    draw:{ polygon:{allowIntersection:false,showArea:true,shapeOptions:{color:'#0b6b2b'}}, marker:false, polyline:false, rectangle:false, circle:false, circlemarker:false },
+    edit:{ featureGroup:drawnItems, edit:true, remove:true }
+  });
+  map.addControl(drawControl);
+  
+  map.on(L.Draw.Event.CREATED,e=>{
+    drawnItems.addLayer(e.layer);
+    if(e.layer instanceof L.Polygon){ 
+      addOrUpdateLabel(e.layer); 
+      addVertexLabels(e.layer);
+      try { checkIntersection(e.layer.toGeoJSON()); } catch(e){} 
     }
+    saveSession();
+  });
+  
+  map.on(L.Draw.Event.EDITED,e=>{
+    e.layers.eachLayer(l=>{ 
+      if(l instanceof L.Polygon){ 
+        addOrUpdateLabel(l); 
+        addVertexLabels(l);
+        try { checkIntersection(l.toGeoJSON()); } catch(e){} 
+      } 
+    });
+    saveSession();
+  });
+  
+  map.on(L.Draw.Event.DELETED,()=>{ 
+    clearAllLabels(); 
+    vertexLabelLayer.clearLayers();
+    saveSession(); 
+  });
 
-    if (localStorage.getItem("bpsAuth") === "true") showApp();
+  // ---------- FUNCIÓN: ETIQUETAR VÉRTICES ----------
+  function addVertexLabels(layer) {
+    vertexLabelLayer.clearLayers();
+    if (layer instanceof L.Polygon) {
+      const latlngs = layer.getLatLngs()[0];
+      latlngs.forEach((latlng, index) => {
+        L.marker(latlng, {
+          icon: L.divIcon({
+            className: 'vertex-label',
+            html: index + 1,
+            iconSize: [18, 18],
+            iconAnchor: [9, 9]
+          }),
+          interactive: false
+        }).addTo(vertexLabelLayer);
+      });
+    }
+  }
+
+  // ---------- LÓGICA UTM ----------
+  function getUtmZone(lon) {
+    if (lon >= -84 && lon < -80) return '32717'; 
+    if (lon >= -80 && lon < -72) return '32718'; 
+    return '32719'; 
+  }
+
+  function calculatePlanarArea(geojson, target_crs_code = null) {
+    if (!geojson || !geojson.geometry || geojson.geometry.type !== 'Polygon') return 0;
+    let final_crs = target_crs_code;
+    if (!final_crs || final_crs === '4326') {
+        try {
+            const centroid = turf.centroid(geojson).geometry.coordinates; 
+            final_crs = getUtmZone(centroid[0]);
+        } catch(e) {
+            final_crs = '32718'; 
+        }
+    }
+    if (final_crs.startsWith('327')) {
+      let area = 0;
+      const coords = geojson.geometry.coordinates[0]; 
+      try {
+        const projectedCoords = coords.map(c => {
+          const projectedPoint = proj4('EPSG:4326', 'EPSG:' + final_crs, [c[0], c[1]]); 
+          return { x: projectedPoint[0], y: projectedPoint[1] }; 
+        });
+        for (let i = 0, j = projectedCoords.length - 1; i < projectedCoords.length; j = i++) {
+          const p1 = projectedCoords[i];
+          const p2 = projectedCoords[j];
+          area += (p2.x + p1.x) * (p2.y - p1.y);
+        }
+        return Math.abs(area / 2); 
+      } catch(e) {
+          return turf.area(geojson);
+      }
+    } 
+    return turf.area(geojson);
+  }
+
+  // ---------- Label area (3 decimales) ----------
+  function addOrUpdateLabel(layer){
+    try {
+      const gj = layer.toGeoJSON();
+      const area_m2 = calculatePlanarArea(gj, null); 
+      const area_ha = parseFloat((area_m2/10000).toFixed(3)); 
+      const center = turf.centerOfMass(gj).geometry.coordinates; 
+      if(layer._label) map.removeLayer(layer._label);
+      layer._label = L.marker([center[1], center[0]], { 
+        icon: L.divIcon({ 
+          className:'label', 
+          html: area_ha.toFixed(3) + " ha",
+          iconSize: [70, 20], // Tamaño base para ayudar al renderizado
+          iconAnchor: [35, 10]
+        }) 
+      }).addTo(map);
+    } catch(e){}
+  }
+
+  function clearAllLabels(){
+    map.eachLayer(l => { if(l instanceof L.Marker && l.options.icon?.options?.className === 'label') map.removeLayer(l); });
+    drawnItems.eachLayer(l => { if(l._label){ map.removeLayer(l._label); delete l._label; }});
+    labelLayer.clearLayers();
+    vertexLabelLayer.clearLayers();
+  }
+
+  // ---------- GPS ----------
+  document.getElementById('btn-gps').onclick=()=>{
+    if(watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; document.getElementById('btn-gps').innerHTML='<i class="fa-solid fa-location-dot"></i>&nbsp;Activar GPS'; showStatus('GPS detenido','#d9534f'); return; }
+    if(!navigator.geolocation) return alert('GPS no disponible.');
+    document.getElementById('btn-gps').innerHTML='<i class="fa-solid fa-stop"></i>&nbsp;Detener GPS';
+    showStatus('GPS activado');
+    watchId = navigator.geolocation.watchPosition(p=>{
+      const lat=p.coords.latitude, lng=p.coords.longitude, acc=p.coords.accuracy;
+      if(!gpsMarker) gpsMarker = L.circleMarker([lat,lng],{radius:8,color:'#ff5722',fillColor:'#ff5722',fillOpacity:1}).addTo(map);
+      gpsMarker.setLatLng([lat,lng]); gpsMarker.accuracy=acc;
+      if(accuracyCircle) map.removeLayer(accuracyCircle);
+      accuracyCircle = L.circle([lat,lng],{radius:acc,color:colorForPrecision(acc),weight:1,fillOpacity:0.08}).addTo(map);
+      const current=[lat,lng];
+      if(!lastTrackPoint || distanceMeters(lastTrackPoint,current)>10){ trackCoords.push(current); trackLayer.setLatLngs(trackCoords); lastTrackPoint=current; }
+      infoPrecision.innerText=`📡 Precisión: ${acc.toFixed(1)} m`;
+    }, null, { enableHighAccuracy:true });
+  };
+  function colorForPrecision(acc){ if(acc<=5) return '#2ecc71'; if(acc<=7) return '#f1c40f'; return '#e74c3c'; }
+  function distanceMeters(a,b){ const R=6371000,rad=Math.PI/180; const dLat=(b[0]-a[0])*rad,dLon=(b[1]-a[1])*rad; const lat1=a[0]*rad,lat2=b[0]*rad; const hav=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2; return 2*R*Math.asin(Math.sqrt(hav)); }
+
+  // ---------- Upload ----------
+  document.getElementById('btn-upload').onclick = ()=> document.getElementById('file-input').click();
+  document.getElementById('file-input').onchange = e => {
+    const file = e.target.files[0]; if(!file) return;
+    const crs = document.getElementById('crs-select').value;
+    if(/propiet/i.test(file.name)){ loadPropietariosFromFile(file); return; }
+    if(file.name.endsWith('.csv')) parseCSV(file, crs); else parseXLSX(file, crs);
+  };
+
+  function parseCSV(file, crs){
+    Papa.parse(file, { header:true, skipEmptyLines:true, complete: r => {
+      const arr = r.data.map(row => {
+        const x = parseFloat(row.Este || row.x || row.X || Object.values(row)[0]);
+        const y = parseFloat(row.Norte || row.y || row.Y || Object.values(row)[1]);
+        return [x,y];
+      }).filter(p => !isNaN(p[0]));
+      handleRows(arr, crs);
+    }});
+  }
+
+  function parseXLSX(file, crs){
+    const reader = new FileReader();
+    reader.onload = e => {
+      const wb = XLSX.read(e.target.result, { type:'binary' });
+      const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+      const arr = data.map(r => {
+        const x = parseFloat(r.Este || r.x || r.X || Object.values(r)[0]);
+        const y = parseFloat(r.Norte || r.y || r.Y || Object.values(r)[1]);
+        return [x,y];
+      }).filter(p => !isNaN(p[0]));
+      handleRows(arr, crs);
+    };
+    reader.readAsBinaryString(file);
+  }
+
+  function handleRows(rows, crs){
+    uploadedLayer.clearLayers(); vertexLabelLayer.clearLayers();
+    const pts = rows.map(r => {
+      const lonLat = (crs === '4326') ? [r[0], r[1]] : proj4('EPSG:'+crs, 'EPSG:4326', [r[0], r[1]]);
+      return [lonLat[1], lonLat[0]];
+    });
+    if(pts.length < 3) return;
+    const poly = L.polygon(pts, { color:'#0056b3' }).addTo(uploadedLayer);
+    addVertexLabels(poly);
+    addOrUpdateLabel(poly);
+    map.fitBounds(poly.getBounds());
+    inputPolygonFeature = poly.toGeoJSON();
+    checkIntersection(inputPolygonFeature);
+    saveSession();
+  }
+
+  // ---------- MIDAGRI ----------
+  const MIDAGRI_URL = 'https://georural.midagri.gob.pe/geoservicios/rest/services/public/Catastro_Rural/MapServer/0';
+  const midagriLayer = L.esri.featureLayer({ url: MIDAGRI_URL });
+
+  function checkIntersection(geojsonFeature){
+    intersectLayer.clearLayers(); labelLayer.clearLayers();
+    midagriLayer.query().intersects(geojsonFeature).run((error, featureCollection) => {
+      if(error || !featureCollection) return;
+      intersectFeatures = featureCollection.features;
+      intersectFeatures.forEach(f => {
+        L.geoJSON(f, { style: { color:"#00a94f", weight:2, fillOpacity:0.2 } }).addTo(intersectLayer);
+        const props = f.properties;
+        const cod = props.cod_predio || props.COD_PREDIO || "";
+        const titular = propietariosMap[cod] || props.TITULAR || "";
+        if(titular){
+          const cent = turf.centroid(f).geometry.coordinates;
+          L.marker([cent[1], cent[0]], { 
+            icon: L.divIcon({ 
+              className: 'etiqueta-predio', 
+              html: titular,
+              iconSize: [100, 20],
+              iconAnchor: [50, 10]
+            }) 
+          }).addTo(labelLayer);
+        }
+      });
+      renderTable(intersectFeatures);
+    });
+  }
+
+  function renderTable(features){
+    let html = "<table><thead><tr><th>COD PREDIO</th><th>TITULAR</th></tr></thead><tbody>";
+    features.forEach(f => {
+      const p = f.properties;
+      const cod = p.cod_predio || p.COD_PREDIO || "";
+      const t = propietariosMap[cod] || p.TITULAR || '';
+      html += `<tr><td>${cod}</td><td>${t}</td></tr>`;
+    });
+    document.getElementById('tabla-inter').innerHTML = html + "</tbody></table>";
+  }
+
+  // ---------- GPS VÉRTICE ----------
+  document.getElementById('btn-gps-vertex').onclick = () => {
+    if(!gpsMarker) return;
+    const p = gpsMarker.getLatLng();
+    gpsVertices.push([p.lat, p.lng]);
+    L.circleMarker(p, {radius:5, color:'green'}).addTo(gpsLayer);
+    if(gpsVertices.length >= 3){
+      if(!activePolygon) activePolygon = L.polygon(gpsVertices, { color:'#0b6b2b' }).addTo(gpsLayer);
+      else activePolygon.setLatLngs(gpsVertices);
+      addOrUpdateLabel(activePolygon);
+      addVertexLabels(activePolygon);
+      checkIntersection(activePolygon.toGeoJSON());
+    }
+    saveSession();
+  };
+
+  // ---------- SESSION & CLEAN ----------
+  function loadPropietariosCSVFromRepo(){
+    fetch('propietarios.csv').then(r=>r.text()).then(txt=>{
+      Papa.parse(txt, { header:true, complete: r=>{
+        r.data.forEach(row=>{ 
+          const c = row.cod_predio || Object.values(row)[0];
+          const n = row.nombre || Object.values(row)[1];
+          if(c) propietariosMap[String(c).trim()] = String(n).trim();
+        });
+      }});
+    }).catch(()=>{});
+  }
+
+  function loadPropietariosFromFile(file){
+    Papa.parse(file, { header:true, complete: r=>{
+      r.data.forEach(row=>{
+        const c = row.cod_predio || Object.values(row)[0];
+        const n = row.nombre || Object.values(row)[1];
+        if(c) propietariosMap[String(c).trim()] = String(n).trim();
+      });
+      showStatus('✅ Propietarios cargados');
+    }});
+  }
+
+  function saveSession(){
+    const data = { drawn: drawnItems.toGeoJSON(), uploaded: uploadedLayer.toGeoJSON() };
+    localStorage.setItem("bps_sesion", JSON.stringify(data));
+  }
+
+  window.addEventListener("load", ()=>{
+    loadPropietariosCSVFromRepo();
+    const saved = localStorage.getItem("bps_sesion");
+    if(saved && confirm("🔄 ¿Restaurar sesión?")){
+      L.geoJSON(JSON.parse(saved).drawn, { onEachFeature:(f,l)=>{ 
+        drawnItems.addLayer(l); if(l instanceof L.Polygon) { addOrUpdateLabel(l); addVertexLabels(l); }
+      }});
+    }
+  });
+
+  document.getElementById('btn-clear').onclick = () => {
+    [gpsLayer, drawnItems, uploadedLayer, intersectLayer, labelLayer, vertexLabelLayer].forEach(l => l.clearLayers());
+    gpsVertices=[]; activePolygon=null;
+    localStorage.removeItem("bps_sesion");
+    showStatus('🧹 Limpio');
+  };
   </script>
-
 </body>
 </html>
-
-
