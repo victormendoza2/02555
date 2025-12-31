@@ -31,7 +31,22 @@
     .dot { width:12px; height:12px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,0.1); }
     .label { background: rgba(255,255,255,0.95); padding:4px 6px; border-radius:6px; border:1px solid #ddd; font-size:12px; font-weight:600; }
 
-    /* estilo para etiqueta de titular */
+    /* Estilo para etiquetas de vértices */
+    .vertex-label {
+      background: #444;
+      color: white;
+      border-radius: 50%;
+      width: 18px;
+      height: 18px;
+      font-size: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid white;
+      font-weight: bold;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+
     .etiqueta-predio {
       background: rgba(255,255,255,0.95);
       border: 1px solid rgba(0,0,0,0.45);
@@ -52,7 +67,6 @@
     }
     #status-msg.show { opacity: 1; }
 
-    /* tabla */
     #results { padding:10px; overflow:auto; max-height:40vh; }
     table { width:100%; border-collapse:collapse; font-size:13px; }
     th, td { border:1px solid #e6e6e6; padding:6px; text-align:left; }
@@ -154,7 +168,7 @@
   proj4.defs("EPSG:32718","+proj=utm +zone=18 +south +datum=WGS84 +units=m +no_defs");
   proj4.defs("EPSG:32719","+proj=utm +zone=19 +south +datum=WGS84 +units=m +no_defs");
 
-  // ---------- MAP, CAPAS, etc. (sin cambios funcionales) ----------
+  // ---------- MAP, CAPAS ----------
   const map = L.map('map', { zoomControl:true, maxZoom: 30}).setView([-7.2, -78.5], 8);
   const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
   const googleSat = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',{attribution:'© Google'});
@@ -166,6 +180,7 @@
   const trackLayer = L.polyline([], { color:'red', weight:3 }).addTo(map);
   const intersectLayer = new L.FeatureGroup().addTo(map);
   const labelLayer = new L.FeatureGroup().addTo(map);
+  const vertexLabelLayer = new L.FeatureGroup().addTo(map); // Nueva capa para números de vértices
 
   let gpsMarker=null, accuracyCircle=null, watchId=null;
   let gpsVertices=[], trackCoords=[];
@@ -175,136 +190,125 @@
   let inputPolygonFeature = null; 
   let propietariosMap = {};
 
-  // ---------- Draw control (usa la nueva función de etiqueta) ----------
+  // ---------- Draw control ----------
   const drawControl = new L.Control.Draw({
     draw:{ polygon:{allowIntersection:false,showArea:true,shapeOptions:{color:'#0b6b2b'}}, marker:true, polyline:false, rectangle:false, circle:false, circlemarker:false },
     edit:{ featureGroup:drawnItems, edit:true, remove:true }
   });
   map.addControl(drawControl);
+  
   map.on(L.Draw.Event.CREATED,e=>{
     drawnItems.addLayer(e.layer);
     if(e.layer instanceof L.Polygon){ 
       addOrUpdateLabel(e.layer); 
+      addVertexLabels(e.layer); // ETIQUETAR VÉRTICES DIBUJADOS
       try { checkIntersection(e.layer.toGeoJSON()); } catch(e){} 
     }
     saveSession();
   });
+  
   map.on(L.Draw.Event.EDITED,e=>{
     e.layers.eachLayer(l=>{ 
       if(l instanceof L.Polygon){ 
         addOrUpdateLabel(l); 
+        addVertexLabels(l); // ACTUALIZAR VÉRTICES TRAS EDITAR
         try { checkIntersection(l.toGeoJSON()); } catch(e){} 
       } 
     });
     saveSession();
   });
-  map.on(L.Draw.Event.DELETED,()=>{ clearAllLabels(); saveSession(); });
+  
+  map.on(L.Draw.Event.DELETED,()=>{ 
+    clearAllLabels(); 
+    vertexLabelLayer.clearLayers();
+    saveSession(); 
+  });
 
 
-  // -----------------------------------------------------------------------
-  // LÓGICA DE DETERMINACIÓN DE ZONA UTM
-  // -----------------------------------------------------------------------
-
-  /**
-   * Determina la zona UTM (EPSG) para Perú Sur (17S, 18S, 19S) basada en la longitud.
-   * @param {number} lon - Longitud (WGS84).
-   * @returns {string} Código EPSG ('32717', '32718', '32719').
-   */
-  function getUtmZone(lon) {
-    // Rangos aproximados de Perú para las zonas UTM Sur
-    if (lon >= -84 && lon < -80) return '32717'; // Zona 17S
-    if (lon >= -80 && lon < -72) return '32718'; // Zona 18S (la más común)
-    if (lon >= -72 && lon < -68) return '32719'; // Zona 19S
-    return '32718'; // Fallback
+  // ---------- NUEVA FUNCIÓN: ETIQUETAR VÉRTICES ----------
+  function addVertexLabels(layer) {
+    // Si la capa ya tiene etiquetas registradas, se podrían limpiar aquí, 
+    // pero usamos vertexLabelLayer.clearLayers() para simplificar en cada redibujo.
+    vertexLabelLayer.clearLayers();
+    
+    if (layer instanceof L.Polygon) {
+      const latlngs = layer.getLatLngs()[0]; // Obtenemos el anillo exterior
+      latlngs.forEach((latlng, index) => {
+        L.marker(latlng, {
+          icon: L.divIcon({
+            className: 'vertex-label',
+            html: index + 1,
+            iconSize: [18, 18],
+            iconAnchor: [9, 9]
+          }),
+          interactive: false
+        }).addTo(vertexLabelLayer);
+      });
+    }
   }
 
-  // -----------------------------------------------------------------------
-  // FUNCIÓN PARA CÁLCULO DE ÁREA PLANAR (UTM)
-  // -----------------------------------------------------------------------
-  /**
-   * Calcula el área planar de un polígono en metros cuadrados (m²) 
-   * proyectando a la zona UTM (EPSG:327xx) adecuada.
-   * @param {object} geojson - Objeto GeoJSON de un polígono (en WGS84 Lon/Lat).
-   * @param {string | null} [target_crs_code] - Código EPSG (ej. '32718'). 
-   * Si es nulo, usa la zona UTM del centroide (para Dibujo/GPS).
-   * Si es un '327xx', usa esa zona (para Excel/CSV).
-   * @returns {number} Área en metros cuadrados.
-   */
+
+  // ---------- LÓGICA DE DETERMINACIÓN DE ZONA UTM ----------
+  function getUtmZone(lon) {
+    if (lon >= -84 && lon < -80) return '32717'; 
+    if (lon >= -80 && lon < -72) return '32718'; 
+    if (lon >= -72 && lon < -68) return '32719'; 
+    return '32718'; 
+  }
+
+  // ---------- FUNCIÓN PARA CÁLCULO DE ÁREA PLANAR (UTM) ----------
   function calculatePlanarArea(geojson, target_crs_code = null) {
-    // Si no es un polígono válido, retorna 0
-    if (!geojson || !geojson.geometry || geojson.geometry.type !== 'Polygon') {
-      return 0;
-    }
-    
-    // 1. Determinar el CRS objetivo para la proyección
+    if (!geojson || !geojson.geometry || geojson.geometry.type !== 'Polygon') return 0;
     let final_crs = target_crs_code;
-    
-    // Si el CRS objetivo no está definido (Dibujo/GPS) o es 4326, se calcula dinámicamente
     if (!final_crs || final_crs === '4326') {
         try {
-            const centroid = turf.centroid(geojson).geometry.coordinates; // [lon, lat]
+            const centroid = turf.centroid(geojson).geometry.coordinates; 
             final_crs = getUtmZone(centroid[0]);
         } catch(e) {
-            console.error("No se pudo calcular centroide para CRS dinámico.", e);
-            final_crs = '32718'; // Fallback seguro
+            final_crs = '32718'; 
         }
     }
-    
-    // Solo si el CRS es una proyección métrica UTM (327xx)
     if (final_crs.startsWith('327')) {
       let area = 0;
-      // Coordenadas: [lon, lat] (GeoJSON standard)
       const coords = geojson.geometry.coordinates[0]; 
-      
-      // 2. Proyectar coordenadas de WGS84 (EPSG:4326) al CRS UTM determinado
       try {
         const projectedCoords = coords.map(c => {
-          // c[0] = lon, c[1] = lat
           const projectedPoint = proj4('EPSG:4326', 'EPSG:' + final_crs, [c[0], c[1]]); 
-          return { x: projectedPoint[0], y: projectedPoint[1] }; // {x, y} en metros
+          return { x: projectedPoint[0], y: projectedPoint[1] }; 
         });
-
-        // 3. Fórmula del cordón de zapato (Shoelace formula) para área planar
         for (let i = 0, j = projectedCoords.length - 1; i < projectedCoords.length; j = i++) {
           const p1 = projectedCoords[i];
           const p2 = projectedCoords[j];
           area += (p2.x + p1.x) * (p2.y - p1.y);
         }
-        return Math.abs(area / 2); // Área en metros cuadrados
+        return Math.abs(area / 2); 
       } catch(e) {
-          console.error(`Error al proyectar a EPSG:${final_crs}. Usando Turf Geodésico.`, e);
-          // Fallback a área geodésica si falla la proyección
           return turf.area(geojson);
       }
     } 
-
-    // Si no es un CRS UTM esperado, se usa el cálculo geodésico de Turf (menos preciso)
     return turf.area(geojson);
   }
 
-
-  // ---------- Label area (MODIFICADA para usar cálculo planar y 3 decimales) ----------
+  // ---------- Label area (3 decimales) ----------
   function addOrUpdateLabel(layer){
     try {
       const gj = layer.toGeoJSON();
-      // USO de calculatePlanarArea con CRS dinámico (null) para polígonos dibujados/GPS
       const area_m2 = calculatePlanarArea(gj, null); 
-      // *** MODIFICACIÓN DE PRECISIÓN A 3 DECIMALES ***
       const area_ha = parseFloat((area_m2/10000).toFixed(3)); 
-      const center = turf.centerOfMass(gj).geometry.coordinates; // [lon,lat]
+      const center = turf.centerOfMass(gj).geometry.coordinates; 
       if(layer._label) map.removeLayer(layer._label);
       layer._label = L.marker([center[1], center[0]], { icon: L.divIcon({ className:'label', html:`${area_ha.toFixed(3)} ha`}) }).addTo(map);
     } catch(e){}
   }
 
   function clearAllLabels(){
-    // remove area labels and titular labels
     map.eachLayer(l => { if(l instanceof L.Marker && l.options.icon?.options?.className === 'label') map.removeLayer(l); });
     drawnItems.eachLayer(l => { if(l._label){ map.removeLayer(l._label); delete l._label; }});
     labelLayer.clearLayers();
+    vertexLabelLayer.clearLayers();
   }
 
-  // ---------- GPS (mantido) ----------
+  // ---------- GPS ----------
   document.getElementById('btn-gps').onclick=()=>{
     if(watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; document.getElementById('btn-gps').innerHTML='<i class="fa-solid fa-location-dot"></i>&nbsp;Activar GPS'; showStatus('GPS detenido','#d9534f'); return; }
     if(!navigator.geolocation) return alert('GPS no disponible.');
@@ -326,7 +330,7 @@
   function colorForPrecision(acc){ if(acc<=5) return '#2ecc71'; if(acc<=7) return '#f1c40f'; return '#e74c3c'; }
   function distanceMeters(a,b){ const R=6371000,rad=Math.PI/180; const dLat=(b[0]-a[0])*rad,dLon=(b[1]-a[1])*rad; const lat1=a[0]*rad,lat2=b[0]*rad; const hav=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2; return 2*R*Math.asin(Math.sqrt(hav)); }
 
-  // ---------- Upload controls (mantido) ----------
+  // ---------- Upload controls ----------
   document.getElementById('btn-upload').onclick = ()=> document.getElementById('file-input').click();
   document.getElementById('file-input').onchange = e => {
     const file = e.target.files[0]; if(!file) return;
@@ -338,6 +342,7 @@
     }
     if(ext === 'csv') parseCSV(file, crs); else parseXLSX(file, crs);
   };
+
   function parseCSV(file, crs){
     Papa.parse(file, { header:true, skipEmptyLines:true, complete: r => {
       const rows = r.data;
@@ -348,9 +353,10 @@
         const y = parseFloat(lower['norte'] ?? lower['y'] ?? lower['lat'] ?? lower['latitud'] ?? lower['latitude'] ?? lower['n'] ?? Object.values(row)[1]);
         if(!isNaN(x) && !isNaN(y)) arr.push([x,y]);
       });
-      handleRows(arr, crs, true);
+      handleRows(arr, crs);
     }});
   }
+
   function parseXLSX(file, crs){
     const reader = new FileReader();
     reader.onload = e => {
@@ -366,310 +372,155 @@
         const vy = (colN >= 0) ? r[colN] : r[1];
         return [parseFloat(vx), parseFloat(vy)];
       }).filter(p => !isNaN(p[0]) && !isNaN(p[1]));
-      handleRows(coords, crs, true);
+      handleRows(coords, crs);
     };
     reader.readAsBinaryString(file);
   }
 
-  // ---------- Build polygon robustly and display (MODIFICADA para cálculo planar y 3 decimales) ----------
-  function handleRows(rows, crs, isArray=false){
-    uploadedLayer.clearLayers(); intersectLayer.clearLayers(); labelLayer.clearLayers(); intersectFeatures = []; inputPolygonFeature = null; document.getElementById('tabla-inter').innerHTML = "Procesando...";
+  function handleRows(rows, crs){
+    uploadedLayer.clearLayers(); 
+    intersectLayer.clearLayers(); 
+    labelLayer.clearLayers(); 
+    vertexLabelLayer.clearLayers(); // LIMPIAR ETIQUETAS ANTERIORES
+    intersectFeatures = []; 
+    inputPolygonFeature = null; 
+    document.getElementById('tabla-inter').innerHTML = "Procesando...";
+    
     const pointsLatLon = [];
     rows.forEach(r => {
-      if(!r) return;
       let x = r[0], y = r[1];
-      if(isNaN(x) || isNaN(y)) return;
       let lonLat;
-      // Proyección: de CRS de entrada a WGS84 (4326) para display en Leaflet
       if(crs === '4326') lonLat = [ parseFloat(x), parseFloat(y) ];
       else {
         try { lonLat = proj4('EPSG:' + crs, 'EPSG:4326', [x, y]); } catch { lonLat = [x,y]; }
       }
-      let lon = Number(lonLat[0]); let lat = Number(lonLat[1]);
-      if(isNaN(lat) || isNaN(lon)) return;
-      const dispLat = lat, dispLon = lon;
-      pointsLatLon.push([dispLat, dispLon]);
-      L.circleMarker([dispLat, dispLon], { radius:5, color:'#007bff', fillColor:'#007bff', fillOpacity:0.9 }).addTo(uploadedLayer);
+      pointsLatLon.push([Number(lonLat[1]), Number(lonLat[0])]);
     });
 
     if(pointsLatLon.length < 3){
       document.getElementById('tabla-inter').innerHTML = "<div class='small'>Se requieren al menos 3 coordenadas válidas.</div>";
-      showStatus('Se requieren al menos 3 coordenadas válidas','#d9534f');
       return;
     }
 
-    const first = pointsLatLon[0], last = pointsLatLon[pointsLatLon.length - 1];
-    if(first[0] !== last[0] || first[1] !== last[1]) pointsLatLon.push(first);
-
+    // Crear polígono para visualización
     const poly = L.polygon(pointsLatLon, { color:'#0056b3', fillOpacity:0.15 }).addTo(uploadedLayer);
     
-    // Crear GeoJSON en Lon/Lat para cálculo y intersección
+    // ETIQUETAR VÉRTICES CARGADOS DESDE EXCEL
+    addVertexLabels(poly);
+
     const coordsLonLat = pointsLatLon.map(p => [p[1], p[0]]);
-    if(coordsLonLat.length < 4) return;
     if(coordsLonLat[0][0] !== coordsLonLat[coordsLonLat.length-1][0] || coordsLonLat[0][1] !== coordsLonLat[coordsLonLat.length-1][1]) coordsLonLat.push(coordsLonLat[0]);
 
     const gj = {
       type: 'Feature',
-      properties: { input_crs: crs }, // Guardar el CRS de entrada
+      properties: { input_crs: crs },
       geometry: { type: 'Polygon', coordinates: [ coordsLonLat ] }
     };
 
-    // MODIFICACIÓN CLAVE: Usar calculatePlanarArea con el CRS seleccionado (crs) y 3 decimales
-    try { 
-        const area_m2 = calculatePlanarArea(gj, crs);
-        gj.properties.area_ha = parseFloat((area_m2 / 10000).toFixed(3)); 
-    } catch(e){ 
-        console.error("Error al calcular área planar de entrada:", e);
-        // Fallback a área geodésica si falla el planar
-        gj.properties.area_ha = parseFloat((turf.area(gj) / 10000).toFixed(3));
-    }
+    const area_m2 = calculatePlanarArea(gj, crs);
+    gj.properties.area_ha = parseFloat((area_m2 / 10000).toFixed(3)); 
     
-    // Actualizar etiqueta del polígono con el área planar calculada (3 decimales)
-    if(poly._label) map.removeLayer(poly._label);
     const center = turf.centerOfMass(gj).geometry.coordinates;
-    poly._label = L.marker([center[1], center[0]], { 
+    L.marker([center[1], center[0]], { 
         icon: L.divIcon({ className:'label', html:`${gj.properties.area_ha.toFixed(3)} ha`}) 
-    }).addTo(map);
+    }).addTo(uploadedLayer);
 
     inputPolygonFeature = gj;
     map.fitBounds(poly.getBounds().pad(0.12));
-    try { checkIntersection(inputPolygonFeature); } catch(e){ console.error(e); showStatus('Error al consultar MIDAGRI','#d9534f'); }
+    checkIntersection(inputPolygonFeature);
     saveSession();
   }
 
-  // ---------- MIDAGRI FeatureLayer ----------
+  // ---------- MIDAGRI ----------
   const MIDAGRI_LAYER_URL = 'https://georural.midagri.gob.pe/geoservicios/rest/services/public/Catastro_Rural/MapServer/0';
   const midagriLayer = L.esri.featureLayer({ url: MIDAGRI_LAYER_URL });
 
-  // ---------- Intersection: paint and store features + etiquetas (MODIFICADA para cálculo planar y 3 decimales) ----------
   function checkIntersection(geojsonFeature){
     try {
       if(!geojsonFeature) return;
       intersectLayer.clearLayers(); labelLayer.clearLayers(); intersectFeatures = []; document.getElementById('tabla-inter').innerHTML = "Consultando MIDAGRI...";
-
       midagriLayer.query().intersects(geojsonFeature).run(function(error, featureCollection){
-        if(error){
-          console.error("MIDAGRI query error:", error);
-          showStatus("Error al consultar Catastro Rural (MIDAGRI)", "#d9534f");
-          document.getElementById('tabla-inter').innerHTML = "<div class='small'>Error al consultar MIDAGRI. Ver consola.</div>";
+        if(error || !featureCollection){
+          document.getElementById('tabla-inter').innerHTML = "<div class='small'>No se pudo conectar con MIDAGRI.</div>";
           return;
         }
-
-        const features = (featureCollection && featureCollection.features) ? featureCollection.features : [];
+        const features = featureCollection.features || [];
         if(features.length === 0){
-          showStatus("❌ No intersecta con predios del Catastro Rural.", "#d9534f");
           document.getElementById('tabla-inter').innerHTML = "<div class='small'>No hay predios intersectados.</div>";
           return;
         }
-
         intersectFeatures = features;
-
         features.forEach(f => {
           const layer = L.geoJSON(f, { style: { color:"#00a94f", weight:2, fillOpacity:0.25 } }).addTo(intersectLayer);
           const props = f.properties || {};
-          const id = props.OBJECTID || props.ID || props.OBJECTID_1 || props.oid || "-";
-          
-          // MODIFICACIÓN: Usar cálculo planar (CRS dinámico - null) como fallback si el área de la feature no existe o es 0
-          let area_ha_calc;
-          if (props.AREA && Number(props.AREA) > 0) {
-              // Área de la fuente (ArcGIS) con 3 decimales
-              area_ha_calc = (Number(props.AREA) / 10000).toFixed(3); 
-          } else {
-              // Calcular planar si AREA no existe o es 0 (3 decimales)
-              area_ha_calc = (calculatePlanarArea(f, null) / 10000).toFixed(3); 
-          }
-
-          // Build popup with available fields
-          let popup = `<div style="font-size:13px"><b>Predio Rural</b><br><b>ID:</b> ${id}<br><b>Área (ha):</b> ${area_ha_calc}<br>`;
-          const extras = ['DEPARTAMEN','DEPARTAMENTO','PROVINCIA','DISTRITO','NOMBRE','CODIGO','TITULAR','PROPIETARI','cod_predio','COD_PREDIO','CODPREDIO','CODIGO_PRED','COD_PREDIO'];
-          extras.forEach(k => { if(props[k]) popup += `<b>${k}:</b> ${props[k]}<br>`; });
-          popup += `</div>`;
-          layer.bindPopup(popup);
-
-          // Attempt to find titular from propietariosMap using cod_predio property variants
-          const candidateKeys = collectCandidateKeysFromFeature(props);
-          const titular = findTitularForFeature(candidateKeys);
+          let area_ha_calc = props.AREA ? (Number(props.AREA) / 10000).toFixed(3) : (calculatePlanarArea(f, null) / 10000).toFixed(3);
+          let popup = `<div style="font-size:13px"><b>Predio Rural</b><br><b>Área (ha):</b> ${area_ha_calc}<br>`;
+          ['DEPARTAMENTO','PROVINCIA','DISTRITO','TITULAR','cod_predio'].forEach(k => { if(props[k]) popup += `<b>${k}:</b> ${props[k]}<br>`; });
+          layer.bindPopup(popup + `</div>`);
+          const titular = findTitularForFeature(collectCandidateKeysFromFeature(props));
           if(titular){
-            // label at centroid
             const cent = turf.centroid(f).geometry.coordinates;
-            L.marker([cent[1], cent[0]], {
-              icon: L.divIcon({
-                className: 'etiqueta-predio',
-                html: titular,
-                iconSize: null
-              })
-            }).addTo(labelLayer);
-            // append to popup
-            layer.bindPopup(popup + `<b>Titular (CSV):</b> ${titular}<br></div>`);
+            L.marker([cent[1], cent[0]], { icon: L.divIcon({ className: 'etiqueta-predio', html: titular }) }).addTo(labelLayer);
           }
         });
-
         renderTable(features);
-        showStatus(`✅ Intersecta con ${features.length} predio(s).`, "#0b6b2b");
       });
-    } catch(e){
-      console.error(e);
-      showStatus("Error en verificación MIDAGRI","#d9534f");
-    }
+    } catch(e){}
   }
-  
-  // ---------- Helper functions for Intersection (mantidas) ----------
+
   function collectCandidateKeysFromFeature(props){
     const keys = [];
-    const possible = ['cod_predio','COD_PREDIO','CODPREDIO','CODIGO_PRED','COD_PREDIO','CODIGO','codigo_predio','num_predio','NUM_PREDIO','NUM'];
-    possible.forEach(k => { if(props[k]) keys.push(String(props[k])); });
-    Object.keys(props||{}).forEach(k=>{
-      const v = props[k];
-      if(v && typeof v === 'string' && v.indexOf('_')>=0) keys.push(v);
-    });
-    const normalized = keys.map(k => String(k).trim().replace(/^"+|"+$/g, '').replace(/^'+|'+$/g, ''));
-    const unique = Array.from(new Set(normalized));
-    return unique;
+    ['cod_predio','COD_PREDIO','CODPREDIO','CODIGO'].forEach(k => { if(props[k]) keys.push(String(props[k]).trim()); });
+    return Array.from(new Set(keys));
   }
-  function findTitularForFeature(candidateKeys){
-    for(const raw of candidateKeys){
-      if(!raw) continue;
-      const k = raw.trim();
-      if(propietariosMap[k]) return propietariosMap[k];
-      const v1 = k.replace(/-/g, '_');
-      if(propietariosMap[v1]) return propietariosMap[v1];
-      const v2 = k.replace(/\s+/g,'');
-      if(propietariosMap[v2]) return propietariosMap[v2];
-      const digitsOnly = k.replace(/['"\s]/g,'');
-      if(propietariosMap[digitsOnly]) return propietariosMap[digitsOnly];
-      const parts = k.split(/[._-]/).filter(Boolean);
-      if(parts.length>1){
-        const last = parts.slice(-1)[0];
-        if(propietariosMap[last]) return propietariosMap[last];
-      }
-    }
+  function findTitularForFeature(keys){
+    for(const k of keys){ if(propietariosMap[k]) return propietariosMap[k]; }
     return null;
   }
   
-  // ---------- Render table (MODIFICADA para mostrar área planar y 3 decimales) ----------
   function renderTable(features){
     const div = document.getElementById('tabla-inter');
-    if(!features || features.length === 0){ div.innerHTML = "<div class='small'>No hay predios intersectados.</div>"; return; }
-    
-    const allKeys = new Set();
-    features.forEach(f => { Object.keys(f.properties || {}).forEach(k => allKeys.add(k)); });
-    
-    // Add columns for calculated area and titular
-    const keys = Array.from(allKeys);
-    if(!keys.includes('AREA_HA_ORIGEN')) keys.push('AREA_HA_ORIGEN');
-    if(!keys.includes('AREA_HA_PLANAR')) keys.push('AREA_HA_PLANAR'); // New calculated planar area column
-    if(!keys.includes('TITULAR_CSV')) keys.push('TITULAR_CSV');
-
-    let html = "<table><thead><tr>";
-    keys.forEach(k => html += `<th>${k.replace('AREA_HA_PLANAR', 'ÁREA PLANAR (HA)').replace('AREA_HA_ORIGEN', 'ÁREA ORIGEN (HA)').replace('TITULAR_CSV', 'TITULAR (CSV)')}</th>`);
-    html += "</tr></thead><tbody>";
-    
+    let html = "<table><thead><tr><th>COD PREDIO</th><th>ÁREA HA</th><th>TITULAR CSV</th></tr></thead><tbody>";
     features.forEach(f => {
-      const props = f.properties || {};
-      const titular = findTitularForFeature(collectCandidateKeysFromFeature(props)) || '';
-      
-      // Recalcular área planar para la tabla (3 decimales)
-      const area_planar_calc = (calculatePlanarArea(f, null) / 10000).toFixed(3); 
-      
-      html += "<tr>";
-      keys.forEach(k => {
-          let value = '';
-          if (k === 'TITULAR_CSV') {
-              value = titular;
-          } else if (k === 'AREA_HA_PLANAR') {
-              value = area_planar_calc;
-          } else if (k === 'AREA_HA_ORIGEN') {
-              // Area from service properties, if available (3 decimales)
-              value = props.AREA ? (Number(props.AREA) / 10000).toFixed(3) : 'N/A';
-          } else {
-              value = (props && props[k]) ? String(props[k]) : '';
-          }
-          html += `<td>${value}</td>`;
-      });
-      html += "</tr>";
+      const p = f.properties;
+      const t = findTitularForFeature(collectCandidateKeysFromFeature(p)) || '';
+      const a = p.AREA ? (Number(p.AREA)/10000).toFixed(3) : (calculatePlanarArea(f, null)/10000).toFixed(3);
+      html += `<tr><td>${p.cod_predio || p.COD_PREDIO || ''}</td><td>${a}</td><td>${t}</td></tr>`;
     });
-    html += "</tbody></table>";
-    div.innerHTML = html;
+    div.innerHTML = html + "</tbody></table>";
   }
-  
-  // ---------- Downloads (MODIFICADA para incluir área planar con 3 decimales) ----------
+
+  // ---------- Downloads ----------
   document.getElementById('btn-download-midagri-geo').onclick = () => {
-    if(!intersectFeatures || intersectFeatures.length === 0){ showStatus('No hay predios para descargar','#d9534f'); return; }
-    const fc = { type:'FeatureCollection', features: intersectFeatures.map(f => {
-        const new_f = JSON.parse(JSON.stringify(f));
-        // Asegurar que el área calculada planar esté en las propiedades
-        new_f.properties = new_f.properties || {};
-        const planar_m2 = calculatePlanarArea(f, null).toFixed(2);
-        // *** PRECISIÓN A 3 DECIMALES ***
-        new_f.properties.AREA_PLANAR_HA = (Number(planar_m2) / 10000).toFixed(3);
-        new_f.properties.AREA_PLANAR_M2 = planar_m2; // Mantenemos M2 a 2 decimales, HA a 3.
-        return new_f;
-    })};
-    const blob = new Blob([JSON.stringify(fc)], { type:'application/geo+json' });
+    if(!intersectFeatures.length) return;
+    const blob = new Blob([JSON.stringify({type:'FeatureCollection', features:intersectFeatures})], { type:'application/geo+json' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'predios_intersectados.geojson'; a.click(); URL.revokeObjectURL(url);
-    showStatus('✅ GeoJSON descargado');
+    const a = document.createElement('a'); a.href = url; a.download = 'midagri.geojson'; a.click();
   };
 
   document.getElementById('btn-download-midagri-csv').onclick = () => {
-    if(!intersectFeatures || intersectFeatures.length === 0){ showStatus('No hay predios para descargar','#d9534f'); return; }
-    const rows = intersectFeatures.map(f => {
-      const p = f.properties || {};
-      const titular = findTitularForFeature(collectCandidateKeysFromFeature(p)) || p.TITULAR || p.NOMBRE || '';
-      
-      // MODIFICACIÓN: Usar cálculo planar (CRS dinámico) con 3 decimales
-      const area_planar_calc = (calculatePlanarArea(f, null) / 10000).toFixed(3); 
-      
-      return {
-        ID: p.OBJECTID || p.ID || p.OBJECTID_1 || "",
-        COD_PREDIO: p.cod_predio || p.COD_PREDIO || '',
-        // *** PRECISIÓN A 3 DECIMALES ***
-        AREA_HA_ORIGEN: p.AREA ? (Number(p.AREA)/10000).toFixed(3) : 'N/A',
-        AREA_HA_PLANAR: area_planar_calc, // Área calculada con precisión UTM (3 decimales)
-        DEPARTAMENTO: p.DEPARTAMEN || p.DEPARTAMENTO || "",
-        PROVINCIA: p.PROVINCIA || "",
-        DISTRITO: p.DISTRITO || "",
-        TITULAR: titular
-      };
-    });
+    if(!intersectFeatures.length) return;
+    const rows = intersectFeatures.map(f => ({ ID: f.properties.OBJECTID, AREA: (f.properties.AREA/10000).toFixed(3), TITULAR: f.properties.TITULAR }));
     const csv = Papa.unparse(rows);
     const blob = new Blob([csv], { type:'text/csv' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'predios_intersectados.csv'; a.click(); URL.revokeObjectURL(url);
-    showStatus('✅ CSV descargado');
+    const a = document.createElement('a'); a.href = url; a.download = 'midagri.csv'; a.click();
   };
 
-  // ---------- Download input polygon (MODIFICADA para asegurar el área planar con 3 decimales) ----------
   document.getElementById('btn-download-input-geo').onclick = () => {
-    if(!inputPolygonFeature){ showStatus('No hay polígono de entrada','#d9534f'); return; }
-    const gj = JSON.parse(JSON.stringify(inputPolygonFeature));
-    gj.properties = gj.properties || {};
-    // El área ya fue calculada de forma planar en handleRows o gps-vertex
-    if (!gj.properties.area_ha) {
-        // Fallback: calcular planar con el CRS guardado o dinámico (null) (3 decimales)
-        const crs = gj.properties.input_crs || null; 
-        gj.properties.area_ha = parseFloat((calculatePlanarArea(gj, crs)/10000).toFixed(3));
-    } else {
-         // Asegurar 3 decimales en la propiedad (en caso de que se haya guardado con menos)
-         gj.properties.area_ha = parseFloat(gj.properties.area_ha).toFixed(3);
-    }
-    const blob = new Blob([JSON.stringify(gj)], { type:'application/geo+json' });
+    if(!inputPolygonFeature) return;
+    const blob = new Blob([JSON.stringify(inputPolygonFeature)], { type:'application/geo+json' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'poligono_entrada.geojson'; a.click(); URL.revokeObjectURL(url);
-    showStatus('✅ Polígono descargado');
+    const a = document.createElement('a'); a.href = url; a.download = 'entrada.geojson'; a.click();
   };
 
-  // ---------- Zoom to intersect (mantido) ----------
   document.getElementById('btn-zoom-intersect').onclick = () => {
-    if(!intersectLayer || intersectLayer.getLayers().length === 0){ showStatus('No hay predios para hacer zoom','#d9534f'); return; }
-    map.fitBounds(intersectLayer.getBounds().pad(0.15));
+    if(intersectLayer.getLayers().length) map.fitBounds(intersectLayer.getBounds().pad(0.1));
   };
   
-  // ---------- AGREGAR VÉRTICE GPS (MODIFICADA para usar cálculo planar y 3 decimales) ----------
+  // ---------- AGREGAR VÉRTICE GPS ----------
   document.getElementById('btn-gps-vertex').onclick = () => {
     if(!gpsMarker) return alert('Activa el GPS primero.');
-    const acc = gpsMarker.accuracy || 999;
-    if(acc>7 && !confirm(`Precisión baja (${acc.toFixed(1)} m). ¿Agregar vértice igualmente?`)) return;
     const p = gpsMarker.getLatLng();
     gpsVertices.push([p.lat,p.lng]);
     L.circleMarker(p,{radius:5,color:'#0b6b2b',fillColor:'#0b6b2b',fillOpacity:1}).addTo(gpsLayer);
@@ -678,112 +529,73 @@
       if(!activePolygon) activePolygon = L.polygon(gpsVertices, { color:'#0b6b2b', fillOpacity:0.12 }).addTo(gpsLayer);
       else activePolygon.setLatLngs(gpsVertices);
       
-      // La función addOrUpdateLabel internamente usa calculatePlanarArea(gj, null) (CRS dinámico) con 3 decimales
       addOrUpdateLabel(activePolygon);
+      addVertexLabels(activePolygon); // ETIQUETAR VÉRTICES GPS
       
       const coordsLonLat = gpsVertices.map(pp => [pp[1], pp[0]]);
-      if(coordsLonLat[0][0] !== coordsLonLat[coordsLonLat.length-1][0] || coordsLonLat[0][1] !== coordsLonLat[coordsLonLat.length-1][1]) coordsLonLat.push(coordsLonLat[0]);
-      
+      coordsLonLat.push(coordsLonLat[0]);
       inputPolygonFeature = { type:'Feature', properties:{}, geometry:{ type:'Polygon', coordinates:[coordsLonLat] } };
-      // MODIFICACIÓN: Usar cálculo planar (CRS dinámico - null) con 3 decimales
       inputPolygonFeature.properties.area_ha = parseFloat((calculatePlanarArea(inputPolygonFeature, null)/10000).toFixed(3));
-      
-      try { checkIntersection(inputPolygonFeature); } catch(e){}
+      checkIntersection(inputPolygonFeature);
     }
-    
     saveSession();
   };
 
-  // ---------- Cargar CSV de propietarios (mantido) ----------
+  // ---------- Propietarios / Session / Clear ----------
   function loadPropietariosCSVFromRepo(){
-    const repoPath = 'data/propietarios.csv';
-    fetch(repoPath).then(resp=>{
-      if(!resp.ok) throw new Error('HTTP '+resp.status);
-      return resp.text();
-    }).then(txt=>{
-      Papa.parse(txt, { header:true, skipEmptyLines:true, delimiter: detectDelimiter(txt), complete: r=>{
-        const rows = r.data || [];
-        propietariosMap = {};
-        rows.forEach(row=>{
-          const lc = {};
-          Object.keys(row).forEach(k => lc[k.trim().toLowerCase()] = row[k]);
-          const nombre = lc['nombre'] ?? lc['name'] ?? lc['titular'] ?? row[Object.keys(row)[1]] ?? '';
-          const cod = lc['cod_predio'] ?? lc['codpredio'] ?? lc['codigo_predio'] ?? lc['cod'] ?? row[Object.keys(row)[0]];
-          if(!cod) return;
-          const raw = String(cod).trim().replace(/^"+|"+$/g,'').replace(/^'+|'+$/g,'');
-          const nm = String(nombre || '').trim();
-          if(raw) propietariosMap[raw] = nm;
+    fetch('data/propietarios.csv').then(resp=>resp.text()).then(txt=>{
+      Papa.parse(txt, { header:true, complete: r=>{
+        r.data.forEach(row=>{ 
+          const c = row.cod_predio || row.COD_PREDIO || Object.values(row)[0];
+          const n = row.nombre || row.TITULAR || Object.values(row)[1];
+          if(c) propietariosMap[String(c).trim()] = String(n).trim();
         });
-        console.log('Propietarios cargados', propietariosMap);
-        showStatus('✅ Propietarios cargados desde data/propietarios.csv',  '#0b6b2b', 2500);
       }});
-    }).catch(err=>{
-      console.warn('No se pudo cargar data/propietarios.csv automáticamente:', err);
-      showStatus('No se encontró data/propietarios.csv — puedes subirlo manualmente', '#d9534f', 3500);
-      setupPropietariosUploadFallback();
-    });
+    }).catch(()=>{});
   }
-  function detectDelimiter(txt){
-    const firstLine = txt.split(/\r?\n/)[0];
-    if((firstLine.match(/;/g)||[]).length > (firstLine.match(/,/g)||[]).length) return ';';
-    return ',';
-  }
-  function setupPropietariosUploadFallback(){
-    document.getElementById('file-input').addEventListener('change', function(e){
-      const file = e.target.files[0];
-      if(!file) return;
-      if(/propiet/i.test(file.name)){
-        loadPropietariosFromFile(file);
-      }
-    });
-  }
+
   function loadPropietariosFromFile(file){
-    Papa.parse(file, { header:true, skipEmptyLines:true, delimiter: detectDelimiterFromFileName(file.name), complete: r=>{
-      propietariosMap = {};
-      (r.data||[]).forEach(row=>{
-        const lc = {};
-        Object.keys(row).forEach(k => lc[k.trim().toLowerCase()] = row[k]);
-        const nombre = lc['nombre'] ?? lc['name'] ?? row[Object.keys(row)[1]] ?? '';
-        const cod = lc['cod_predio'] ?? lc['codpredio'] ?? lc['cod'] ?? row[Object.keys(row)[0]];
-        if(!cod) return;
-        const raw = String(cod).trim().replace(/^"+|"+$/g,'').replace(/^'+|'+$/g,'');
-        propietariosMap[raw] = String(nombre||'').trim();
+    Papa.parse(file, { header:true, complete: r=>{
+      r.data.forEach(row=>{
+        const c = row.cod_predio || Object.values(row)[0];
+        const n = row.nombre || Object.values(row)[1];
+        if(c) propietariosMap[String(c).trim()] = String(n).trim();
       });
-      showStatus('✅ Propietarios cargados (manual)', '#0b6b2b', 2500);
+      showStatus('✅ Propietarios cargados');
     }});
   }
-  function detectDelimiterFromFileName(name){ return name.indexOf('.csv')>=0 ? ';' : ','; }
 
-  // ---------- Save / restore session (mantido) ----------
   function saveSession(){
     const data = { drawn: drawnItems.toGeoJSON(), gps: gpsLayer.toGeoJSON(), uploaded: uploadedLayer.toGeoJSON(), track: trackCoords };
     localStorage.setItem("bps_sesion", JSON.stringify(data));
   }
+
   window.addEventListener("load", ()=>{
+    loadPropietariosCSVFromRepo();
     const saved = localStorage.getItem("bps_sesion");
-    if(saved && confirm("🔄 ¿Deseas restaurar tu última sesión?")){
+    if(saved && confirm("🔄 ¿Restaurar sesión?")){
       const data = JSON.parse(saved);
-      L.geoJSON(data.drawn, { onEachFeature:(f,l)=>{ drawnItems.addLayer(l); if(l instanceof L.Polygon) addOrUpdateLabel(l); }});
-      L.geoJSON(data.gps, { onEachFeature:(f,l)=>{ gpsLayer.addLayer(l); }});
-      L.geoJSON(data.uploaded, { onEachFeature:(f,l)=>{ uploadedLayer.addLayer(l); }});
+      L.geoJSON(data.drawn, { onEachFeature:(f,l)=>{ 
+        drawnItems.addLayer(l); 
+        if(l instanceof L.Polygon) { addOrUpdateLabel(l); addVertexLabels(l); }
+      }});
+      L.geoJSON(data.uploaded, { onEachFeature:(f,l)=>{ 
+        uploadedLayer.addLayer(l); 
+        if(l instanceof L.Polygon) { addVertexLabels(l); }
+      }});
       trackCoords = data.track || [];
       trackLayer.setLatLngs(trackCoords);
     }
-    loadPropietariosCSVFromRepo();
   });
 
-  // ---------- Clear (mantido) ----------
   document.getElementById('btn-clear').onclick = () => {
     if(!confirm('¿Eliminar todo?')) return;
-    gpsLayer.clearLayers(); drawnItems.clearLayers(); uploadedLayer.clearLayers(); trackLayer.setLatLngs([]); intersectLayer.clearLayers(); labelLayer.clearLayers();
-    gpsVertices=[]; trackCoords=[]; activePolygon=null; lastTrackPoint=null; intersectFeatures=null; inputPolygonFeature=null;
-    if(gpsMarker){ map.removeLayer(gpsMarker); gpsMarker=null; } if(accuracyCircle){ map.removeLayer(accuracyCircle); accuracyCircle=null; }
-    clearAllLabels(); infoPrecision.innerText='📡 Precisión: -- m'; localStorage.removeItem("bps_sesion");
-    if(watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; document.getElementById('btn-gps').innerHTML='<i class="fa-solid fa-location-dot"></i>&nbsp;Activar GPS'; }
+    gpsLayer.clearLayers(); drawnItems.clearLayers(); uploadedLayer.clearLayers(); trackLayer.setLatLngs([]); intersectLayer.clearLayers(); labelLayer.clearLayers(); vertexLabelLayer.clearLayers();
+    gpsVertices=[]; trackCoords=[]; activePolygon=null; lastTrackPoint=null; inputPolygonFeature=null;
+    if(gpsMarker){ map.removeLayer(gpsMarker); gpsMarker=null; }
+    localStorage.removeItem("bps_sesion");
     showStatus('🧹 Todo eliminado','#d9534f');
   };
-
-  // ---------- End ----------
   </script>
 </body>
 </html>
