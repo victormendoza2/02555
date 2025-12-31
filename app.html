@@ -31,21 +31,17 @@
     .dot { width:12px; height:12px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,0.1); }
     .label { background: rgba(255,255,255,0.95); padding:4px 6px; border-radius:6px; border:1px solid #ddd; font-size:12px; font-weight:600; }
 
-    /* Estilo para las etiquetas de los vértices */
-    .vertex-label {
-      background: #333;
+    /* Estilo para etiquetas de vértices */
+    .label-vertice {
+      background: #007bff;
       color: white;
       border: 1px solid white;
-      border-radius: 50%;
-      width: 18px !important;
-      height: 18px !important;
+      padding: 1px 4px;
       font-size: 10px;
       font-weight: bold;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.4);
-      pointer-events: none;
+      border-radius: 4px;
+      white-space: nowrap;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.3);
     }
 
     .etiqueta-predio {
@@ -142,6 +138,7 @@
   </div>
 
   <div id="map"></div>
+
   <div id="status-msg" role="status" aria-live="polite"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -163,7 +160,7 @@
     el._t = setTimeout(()=> el.classList.remove('show'), timeout);
   }
 
-  // ---------- PROJS ----------
+  // ---------- PROJS UTM ----------
   proj4.defs("EPSG:32717","+proj=utm +zone=17 +south +datum=WGS84 +units=m +no_defs");
   proj4.defs("EPSG:32718","+proj=utm +zone=18 +south +datum=WGS84 +units=m +no_defs");
   proj4.defs("EPSG:32719","+proj=utm +zone=19 +south +datum=WGS84 +units=m +no_defs");
@@ -179,7 +176,6 @@
   const trackLayer = L.polyline([], { color:'red', weight:3 }).addTo(map);
   const intersectLayer = new L.FeatureGroup().addTo(map);
   const labelLayer = new L.FeatureGroup().addTo(map);
-  const vertexLabelLayer = new L.FeatureGroup().addTo(map); // Capa específica para etiquetas de vértices
 
   let gpsMarker=null, accuracyCircle=null, watchId=null;
   let gpsVertices=[], trackCoords=[];
@@ -197,15 +193,24 @@
   map.addControl(drawControl);
   map.on(L.Draw.Event.CREATED,e=>{
     drawnItems.addLayer(e.layer);
-    if(e.layer instanceof L.Polygon){ addOrUpdateLabel(e.layer); try { checkIntersection(e.layer.toGeoJSON()); } catch(e){} }
+    if(e.layer instanceof L.Polygon){ 
+      addOrUpdateLabel(e.layer); 
+      try { checkIntersection(e.layer.toGeoJSON()); } catch(e){} 
+    }
     saveSession();
   });
   map.on(L.Draw.Event.EDITED,e=>{
-    e.layers.eachLayer(l=>{ if(l instanceof L.Polygon){ addOrUpdateLabel(l); try { checkIntersection(l.toGeoJSON()); } catch(e){} } });
+    e.layers.eachLayer(l=>{ 
+      if(l instanceof L.Polygon){ 
+        addOrUpdateLabel(l); 
+        try { checkIntersection(l.toGeoJSON()); } catch(e){} 
+      } 
+    });
     saveSession();
   });
   map.on(L.Draw.Event.DELETED,()=>{ clearAllLabels(); saveSession(); });
 
+  // ---------- Lógica UTM y Área ----------
   function getUtmZone(lon) {
     if (lon >= -84 && lon < -80) return '32717';
     if (lon >= -80 && lon < -72) return '32718';
@@ -252,10 +257,9 @@
   }
 
   function clearAllLabels(){
-    map.eachLayer(l => { if(l instanceof L.Marker && l.options.icon?.options?.className === 'label') map.removeLayer(l); });
+    map.eachLayer(l => { if(l instanceof L.Marker && (l.options.icon?.options?.className === 'label' || l.options.icon?.options?.className === 'label-vertice')) map.removeLayer(l); });
     drawnItems.eachLayer(l => { if(l._label){ map.removeLayer(l._label); delete l._label; }});
     labelLayer.clearLayers();
-    vertexLabelLayer.clearLayers();
   }
 
   // ---------- GPS ----------
@@ -280,7 +284,7 @@
   function colorForPrecision(acc){ if(acc<=5) return '#2ecc71'; if(acc<=7) return '#f1c40f'; return '#e74c3c'; }
   function distanceMeters(a,b){ const R=6371000,rad=Math.PI/180; const dLat=(b[0]-a[0])*rad,dLon=(b[1]-a[1])*rad; const lat1=a[0]*rad,lat2=b[0]*rad; const hav=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2; return 2*R*Math.asin(Math.sqrt(hav)); }
 
-  // ---------- Upload ----------
+  // ---------- Upload y Procesamiento con Etiquetas de Vértices ----------
   document.getElementById('btn-upload').onclick = ()=> document.getElementById('file-input').click();
   document.getElementById('file-input').onchange = e => {
     const file = e.target.files[0]; if(!file) return;
@@ -289,6 +293,7 @@
     if(/propiet/i.test(file.name)){ loadPropietariosFromFile(file); return; }
     if(ext === 'csv') parseCSV(file, crs); else parseXLSX(file, crs);
   };
+
   function parseCSV(file, crs){
     Papa.parse(file, { header:true, skipEmptyLines:true, complete: r => {
       const rows = r.data; const arr = [];
@@ -301,6 +306,7 @@
       handleRows(arr, crs);
     }});
   }
+
   function parseXLSX(file, crs){
     const reader = new FileReader();
     reader.onload = e => {
@@ -311,94 +317,114 @@
       const headers = data[0].map(h => String(h).toLowerCase());
       const colE = headers.findIndex(h => h.includes('este') || h==='x' || h==='e' || h.includes('lon'));
       const colN = headers.findIndex(h => h.includes('norte') || h==='y' || h==='n' || h.includes('lat'));
-      const coords = data.slice(1).map(r => [parseFloat(colE>=0?r[colE]:r[0]), parseFloat(colN>=0?r[colN]:r[1])]).filter(p => !isNaN(p[0]) && !isNaN(p[1]));
+      const coords = data.slice(1).map(r => {
+        const vx = (colE >= 0) ? r[colE] : r[0]; const vy = (colN >= 0) ? r[colN] : r[1];
+        return [parseFloat(vx), parseFloat(vy)];
+      }).filter(p => !isNaN(p[0]) && !isNaN(p[1]));
       handleRows(coords, crs);
     };
     reader.readAsBinaryString(file);
   }
 
-  // ---------- FUNCIÓN MODIFICADA: ETIQUETADO DE VÉRTICES ----------
   function handleRows(rows, crs){
     uploadedLayer.clearLayers(); intersectLayer.clearLayers(); labelLayer.clearLayers(); 
-    vertexLabelLayer.clearLayers(); // Limpiar etiquetas de vértices anteriores
-    intersectFeatures = []; inputPolygonFeature = null; 
-    document.getElementById('tabla-inter').innerHTML = "Procesando...";
-    
+    intersectFeatures = []; inputPolygonFeature = null; document.getElementById('tabla-inter').innerHTML = "Procesando...";
     const pointsLatLon = [];
+
     rows.forEach((r, index) => {
       let x = r[0], y = r[1];
       let lonLat;
       if(crs === '4326') lonLat = [ parseFloat(x), parseFloat(y) ];
       else { try { lonLat = proj4('EPSG:' + crs, 'EPSG:4326', [x, y]); } catch { lonLat = [x,y]; } }
       
-      const lat = Number(lonLat[1]), lon = Number(lonLat[0]);
+      let lon = Number(lonLat[0]); let lat = Number(lonLat[1]);
       if(isNaN(lat) || isNaN(lon)) return;
       pointsLatLon.push([lat, lon]);
 
-      // AGREGAR ETIQUETA DE VÉRTICE (1, 2, 3...)
+      // AGREGAR VÉRTICE Y ETIQUETA (V-1, V-2...)
+      L.circleMarker([lat, lon], { radius:4, color:'#007bff', fillColor:'#fff', fillOpacity:1, weight:2 }).addTo(uploadedLayer);
       L.marker([lat, lon], {
         icon: L.divIcon({
-          className: 'vertex-label',
-          html: index + 1
-        })
-      }).addTo(vertexLabelLayer);
-
-      L.circleMarker([lat, lon], { radius:4, color:'#007bff', fillColor:'#007bff', fillOpacity:0.9 }).addTo(uploadedLayer);
+          className: 'label-vertice',
+          html: `V-${index + 1}`,
+          iconAnchor: [-8, 8]
+        }),
+        interactive: false
+      }).addTo(uploadedLayer);
     });
 
-    if(pointsLatLon.length < 3) return showStatus('Mínimo 3 coordenadas','#d9534f');
+    if(pointsLatLon.length < 3){
+      document.getElementById('tabla-inter').innerHTML = "Se requieren mín. 3 coordenadas.";
+      return;
+    }
 
-    const poly = L.polygon(pointsLatLon, { color:'#0056b3', fillOpacity:0.15 }).addTo(uploadedLayer);
+    const first = pointsLatLon[0], last = pointsLatLon[pointsLatLon.length - 1];
+    if(first[0] !== last[0] || first[1] !== last[1]) pointsLatLon.push(first);
+
+    const poly = L.polygon(pointsLatLon, { color:'#0056b3', fillOpacity:0.15, weight:2 }).addTo(uploadedLayer);
     const coordsLonLat = pointsLatLon.map(p => [p[1], p[0]]);
-    if(coordsLonLat[0][0] !== coordsLonLat[coordsLonLat.length-1][0]) coordsLonLat.push(coordsLonLat[0]);
-
     const gj = { type: 'Feature', properties: { input_crs: crs }, geometry: { type: 'Polygon', coordinates: [ coordsLonLat ] } };
+
     try { 
         const area_m2 = calculatePlanarArea(gj, crs);
         gj.properties.area_ha = parseFloat((area_m2 / 10000).toFixed(3)); 
     } catch(e){ gj.properties.area_ha = parseFloat((turf.area(gj) / 10000).toFixed(3)); }
     
     const center = turf.centerOfMass(gj).geometry.coordinates;
-    poly._label = L.marker([center[1], center[0]], { icon: L.divIcon({ className:'label', html:`${gj.properties.area_ha.toFixed(3)} ha`}) }).addTo(map);
+    poly._label = L.marker([center[1], center[0]], { 
+        icon: L.divIcon({ className:'label', html:`${gj.properties.area_ha.toFixed(3)} ha`}) 
+    }).addTo(map);
 
     inputPolygonFeature = gj;
     map.fitBounds(poly.getBounds().pad(0.12));
-    checkIntersection(inputPolygonFeature);
+    try { checkIntersection(inputPolygonFeature); } catch(e){}
     saveSession();
   }
 
-  // ---------- MIDAGRI ----------
-  const midagriLayer = L.esri.featureLayer({ url: 'https://georural.midagri.gob.pe/geoservicios/rest/services/public/Catastro_Rural/MapServer/0' });
+  // ---------- MIDAGRI e Intersección ----------
+  const MIDAGRI_LAYER_URL = 'https://georural.midagri.gob.pe/geoservicios/rest/services/public/Catastro_Rural/MapServer/0';
+  const midagriLayer = L.esri.featureLayer({ url: MIDAGRI_LAYER_URL });
 
   function checkIntersection(geojsonFeature){
-    if(!geojsonFeature) return;
-    intersectLayer.clearLayers(); labelLayer.clearLayers(); document.getElementById('tabla-inter').innerHTML = "Consultando...";
-    midagriLayer.query().intersects(geojsonFeature).run((error, featureCollection)=>{
-      if(error || !featureCollection) return;
-      intersectFeatures = featureCollection.features;
-      intersectFeatures.forEach(f => {
-        const layer = L.geoJSON(f, { style: { color:"#00a94f", weight:2, fillOpacity:0.25 } }).addTo(intersectLayer);
-        const props = f.properties || {};
-        const area_ha_calc = props.AREA ? (Number(props.AREA) / 10000).toFixed(3) : (calculatePlanarArea(f, null) / 10000).toFixed(3);
-        let popup = `<b>Área (ha):</b> ${area_ha_calc}<br>`;
-        ['DEPARTAMENTO','PROVINCIA','DISTRITO','TITULAR','cod_predio'].forEach(k => { if(props[k]) popup += `<b>${k}:</b> ${props[k]}<br>`; });
-        layer.bindPopup(popup);
-        const titular = findTitularForFeature(collectCandidateKeysFromFeature(props));
-        if(titular){
-          const cent = turf.centroid(f).geometry.coordinates;
-          L.marker([cent[1], cent[0]], { icon: L.divIcon({ className: 'etiqueta-predio', html: titular }) }).addTo(labelLayer);
+    try {
+      if(!geojsonFeature) return;
+      intersectLayer.clearLayers(); labelLayer.clearLayers(); intersectFeatures = []; 
+      document.getElementById('tabla-inter').innerHTML = "Consultando MIDAGRI...";
+
+      midagriLayer.query().intersects(geojsonFeature).run(function(error, featureCollection){
+        if(error){ document.getElementById('tabla-inter').innerHTML = "Error MIDAGRI."; return; }
+        const features = (featureCollection && featureCollection.features) ? featureCollection.features : [];
+        if(features.length === 0){
+          showStatus("❌ No intersecta.", "#d9534f");
+          document.getElementById('tabla-inter').innerHTML = "Sin intersecciones.";
+          return;
         }
+        intersectFeatures = features;
+        features.forEach(f => {
+          const layer = L.geoJSON(f, { style: { color:"#00a94f", weight:2, fillOpacity:0.25 } }).addTo(intersectLayer);
+          const props = f.properties || {};
+          let area_ha_calc = props.AREA ? (Number(props.AREA) / 10000).toFixed(3) : (calculatePlanarArea(f, null) / 10000).toFixed(3);
+          let popup = `<div style="font-size:12px"><b>Predio Rural</b><br><b>Área:</b> ${area_ha_calc} ha<br>`;
+          ['DEPARTAMENTO','PROVINCIA','DISTRITO','NOMBRE','COD_PREDIO'].forEach(k => { if(props[k]) popup += `<b>${k}:</b> ${props[k]}<br>`; });
+          const titular = findTitularForFeature(collectCandidateKeysFromFeature(props));
+          if(titular){
+            const cent = turf.centroid(f).geometry.coordinates;
+            L.marker([cent[1], cent[0]], { icon: L.divIcon({ className: 'etiqueta-predio', html: titular }) }).addTo(labelLayer);
+            popup += `<b>Titular (CSV):</b> ${titular}`;
+          }
+          layer.bindPopup(popup + `</div>`);
+        });
+        renderTable(features);
+        showStatus(`✅ ${features.length} predio(s) hallados.`, "#0b6b2b");
       });
-      renderTable(intersectFeatures);
-    });
+    } catch(e){}
   }
 
   function collectCandidateKeysFromFeature(props){
-    const keys = [];
-    ['cod_predio','COD_PREDIO','CODPREDIO','CODIGO'].forEach(k => { if(props[k]) keys.push(String(props[k])); });
+    const keys = []; const possible = ['cod_predio','COD_PREDIO','CODPREDIO','CODIGO'];
+    possible.forEach(k => { if(props[k]) keys.push(String(props[k])); });
     return Array.from(new Set(keys.map(k => String(k).trim())));
   }
-
   function findTitularForFeature(candidateKeys){
     for(const k of candidateKeys){ if(propietariosMap[k]) return propietariosMap[k]; }
     return null;
@@ -406,88 +432,117 @@
 
   function renderTable(features){
     const div = document.getElementById('tabla-inter');
-    if(!features.length){ div.innerHTML = "No hay resultados."; return; }
-    let html = "<table><thead><tr><th>COD_PREDIO</th><th>ÁREA (HA)</th><th>TITULAR (CSV)</th></tr></thead><tbody>";
+    if(!features.length){ div.innerHTML = "Sin resultados."; return; }
+    let html = "<table><thead><tr><th>COD_PREDIO</th><th>ÁREA PLANAR (HA)</th><th>TITULAR (CSV)</th></tr></thead><tbody>";
     features.forEach(f => {
-      const p = f.properties;
-      const titular = findTitularForFeature(collectCandidateKeysFromFeature(p)) || '';
-      html += `<tr><td>${p.cod_predio||p.COD_PREDIO||''}</td><td>${(calculatePlanarArea(f,null)/10000).toFixed(3)}</td><td>${titular}</td></tr>`;
+      const props = f.properties || {};
+      const titular = findTitularForFeature(collectCandidateKeysFromFeature(props)) || '';
+      const area_p = (calculatePlanarArea(f, null) / 10000).toFixed(3);
+      html += `<tr><td>${props.COD_PREDIO || props.cod_predio || '-'}</td><td>${area_p}</td><td>${titular}</td></tr>`;
     });
     div.innerHTML = html + "</tbody></table>";
   }
 
-  // ---------- Downloads ----------
+  // ---------- Descargas ----------
   document.getElementById('btn-download-midagri-geo').onclick = () => {
     if(!intersectFeatures.length) return;
-    const blob = new Blob([JSON.stringify({type:'FeatureCollection', features:intersectFeatures})], {type:'application/geo+json'});
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'intersectados.geojson'; a.click();
+    const fc = { type:'FeatureCollection', features: intersectFeatures.map(f => {
+        const nf = JSON.parse(JSON.stringify(f));
+        nf.properties.AREA_PLANAR_HA = (calculatePlanarArea(f, null) / 10000).toFixed(3);
+        return nf;
+    })};
+    const blob = new Blob([JSON.stringify(fc)], { type:'application/geo+json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'predios.geojson'; a.click();
   };
+
   document.getElementById('btn-download-midagri-csv').onclick = () => {
     if(!intersectFeatures.length) return;
-    const csv = Papa.unparse(intersectFeatures.map(f => ({ID: f.properties.OBJECTID, AREA_HA: (calculatePlanarArea(f,null)/10000).toFixed(3)})));
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'})); a.download = 'intersectados.csv'; a.click();
+    const rows = intersectFeatures.map(f => ({
+      COD_PREDIO: f.properties.COD_PREDIO || '',
+      AREA_HA: (calculatePlanarArea(f, null) / 10000).toFixed(3),
+      TITULAR: findTitularForFeature(collectCandidateKeysFromFeature(f.properties)) || ''
+    }));
+    const blob = new Blob([Papa.unparse(rows)], { type:'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'predios.csv'; a.click();
   };
+
   document.getElementById('btn-download-input-geo').onclick = () => {
     if(!inputPolygonFeature) return;
-    const blob = new Blob([JSON.stringify(inputPolygonFeature)], {type:'application/geo+json'});
+    const blob = new Blob([JSON.stringify(inputPolygonFeature)], { type:'application/geo+json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'poligono_entrada.geojson'; a.click();
   };
-  document.getElementById('btn-zoom-intersect').onclick = () => { if(intersectLayer.getLayers().length) map.fitBounds(intersectLayer.getBounds()); };
 
-  // ---------- GPS Vertex ----------
+  document.getElementById('btn-zoom-intersect').onclick = () => {
+    if(intersectLayer.getLayers().length) map.fitBounds(intersectLayer.getBounds().pad(0.15));
+  };
+
+  // ---------- Vértice GPS ----------
   document.getElementById('btn-gps-vertex').onclick = () => {
-    if(!gpsMarker) return alert('GPS no activo');
+    if(!gpsMarker) return alert('Activa el GPS.');
     const p = gpsMarker.getLatLng();
-    gpsVertices.push([p.lat, p.lng]);
-    L.circleMarker(p,{radius:5,color:'#0b6b2b',fillColor:'#0b6b2b',fillOpacity:1}).addTo(gpsLayer);
+    gpsVertices.push([p.lat,p.lng]);
+    L.circleMarker(p,{radius:5,color:'#0b6b2b',fillColor:'#fff',fillOpacity:1,weight:2}).addTo(gpsLayer);
+    L.marker(p, { icon: L.divIcon({ className:'label-vertice', html:`V-${gpsVertices.length}`, iconAnchor:[-8,8] }) }).addTo(gpsLayer);
     
-    // Etiqueta de vértice también para GPS
-    L.marker(p, { icon: L.divIcon({ className: 'vertex-label', html: gpsVertices.length }) }).addTo(vertexLabelLayer);
-
     if(gpsVertices.length>=3){
       if(!activePolygon) activePolygon = L.polygon(gpsVertices, { color:'#0b6b2b', fillOpacity:0.12 }).addTo(gpsLayer);
       else activePolygon.setLatLngs(gpsVertices);
       addOrUpdateLabel(activePolygon);
       const coords = gpsVertices.map(pp => [pp[1], pp[0]]);
       coords.push(coords[0]);
-      inputPolygonFeature = { type:'Feature', properties:{}, geometry:{ type:'Polygon', coordinates:[coords] } };
+      inputPolygonFeature = { type:'Feature', properties:{ area_ha: (calculatePlanarArea({type:'Feature',geometry:{type:'Polygon',coordinates:[coords]}}, null)/10000).toFixed(3) }, geometry:{ type:'Polygon', coordinates:[coords] } };
       checkIntersection(inputPolygonFeature);
     }
     saveSession();
   };
 
-  // ---------- Otros ----------
+  // ---------- Gestión de Propietarios y Sesión ----------
   function loadPropietariosCSVFromRepo(){
-    fetch('data/propietarios.csv').then(r => r.text()).then(txt => {
-      Papa.parse(txt, { header:true, skipEmptyLines:true, complete: r => {
-        r.data.forEach(row => {
+    fetch('data/propietarios.csv').then(r=>r.text()).then(txt=>{
+      Papa.parse(txt, { header:true, skipEmptyLines:true, complete: r=>{
+        r.data.forEach(row=>{
           const cod = row['cod_predio'] || row['COD_PREDIO'] || Object.values(row)[0];
           const nom = row['nombre'] || row['TITULAR'] || Object.values(row)[1];
           if(cod) propietariosMap[String(cod).trim()] = String(nom).trim();
         });
       }});
-    }).catch(e => console.warn("CSV auto no hallado"));
+    }).catch(e=>console.warn("CSV auto no hallado."));
   }
 
   function loadPropietariosFromFile(file){
-    Papa.parse(file, { header:true, complete: r => {
-      r.data.forEach(row => { propietariosMap[String(Object.values(row)[0]).trim()] = String(Object.values(row)[1]).trim(); });
-      showStatus('✅ Propietarios manual cargado');
+    Papa.parse(file, { header:true, skipEmptyLines:true, complete: r=>{
+      r.data.forEach(row=>{
+        const cod = row['cod_predio'] || Object.values(row)[0];
+        propietariosMap[String(cod).trim()] = String(Object.values(row)[1] || '').trim();
+      });
+      showStatus('✅ Propietarios cargados');
     }});
   }
 
   function saveSession(){
-    localStorage.setItem("bps_sesion", JSON.stringify({ drawn: drawnItems.toGeoJSON(), gps: gpsLayer.toGeoJSON(), uploaded: uploadedLayer.toGeoJSON() }));
+    localStorage.setItem("bps_sesion", JSON.stringify({ drawn: drawnItems.toGeoJSON(), gps: gpsLayer.toGeoJSON(), uploaded: uploadedLayer.toGeoJSON(), track: trackCoords }));
   }
 
+  window.addEventListener("load", ()=>{
+    const saved = localStorage.getItem("bps_sesion");
+    if(saved && confirm("¿Restaurar sesión?")){
+      const data = JSON.parse(saved);
+      L.geoJSON(data.drawn, { onEachFeature:(f,l)=>{ drawnItems.addLayer(l); if(l instanceof L.Polygon) addOrUpdateLabel(l); }});
+      L.geoJSON(data.gps, { onEachFeature:(f,l)=>{ gpsLayer.addLayer(l); }});
+      L.geoJSON(data.uploaded, { onEachFeature:(f,l)=>{ uploadedLayer.addLayer(l); }});
+      trackCoords = data.track || []; trackLayer.setLatLngs(trackCoords);
+    }
+    loadPropietariosCSVFromRepo();
+  });
+
   document.getElementById('btn-clear').onclick = () => {
-    gpsLayer.clearLayers(); drawnItems.clearLayers(); uploadedLayer.clearLayers(); 
-    intersectLayer.clearLayers(); labelLayer.clearLayers(); vertexLabelLayer.clearLayers();
-    gpsVertices=[]; trackLayer.setLatLngs([]); localStorage.removeItem("bps_sesion");
-    showStatus('🧹 Limpiado');
+    if(!confirm('¿Limpiar todo?')) return;
+    [gpsLayer, drawnItems, uploadedLayer, intersectLayer, labelLayer].forEach(l => l.clearLayers());
+    trackLayer.setLatLngs([]); gpsVertices=[]; trackCoords=[]; activePolygon=null;
+    if(gpsMarker) map.removeLayer(gpsMarker); if(accuracyCircle) map.removeLayer(accuracyCircle);
+    localStorage.removeItem("bps_sesion"); showStatus('Limpiado');
   };
 
-  window.onload = () => { loadPropietariosCSVFromRepo(); };
   </script>
 </body>
 </html>
