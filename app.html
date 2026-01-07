@@ -1,4 +1,4 @@
-<!doctype html>
+octype html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
@@ -107,6 +107,30 @@
           <div id="info-precision">📡 Precisión: -- m</div>
         </div>
       </div>
+		<div class="infoBox" style="margin-top:10px;">
+  <div class="small"><b>🔗 Conectar Servicio REST (Multi-capa)</b></div>
+
+  <input id="rest-url"
+         type="text"
+         placeholder="https://servidor/ArcGIS/rest/services/.../MapServer"
+         style="width:100%;margin-top:6px;">
+
+  <button id="btn-rest-list"
+          style="width:100%;margin-top:6px;">
+    <i class="fa-solid fa-layer-group"></i>&nbsp;Listar Capas
+  </button>
+
+  <select id="rest-layer-select"
+          style="width:100%;margin-top:6px;">
+    <option value="">— Elegir Capa —</option>
+  </select>
+
+  <button id="btn-rest-intersect"
+          class="primary"
+          style="width:100%;margin-top:6px;">
+    <i class="fa-solid fa-object-group"></i>&nbsp;Intersectar Capa Seleccionada
+  </button>
+</div>
 
       <div class="infoBox" style="display:flex;flex-direction:column;gap:6px;">
         <div class="small"><b>Resultados MIDAGRI (Predio Rural)</b></div>
@@ -165,6 +189,11 @@
   const drawnItems = new L.FeatureGroup().addTo(map);
   const trackLayer = L.polyline([], { color:'red', weight:3 }).addTo(map);
   const intersectLayer = new L.FeatureGroup().addTo(map);
+  
+  // --- REST multi-capa ---
+  const restIntersectLayer = new L.FeatureGroup().addTo(map);
+  let restIntersectFeatures = [];
+
   const labelLayer = new L.FeatureGroup().addTo(map);
 
   let gpsMarker=null, accuracyCircle=null, watchId=null;
@@ -782,9 +811,121 @@
     if(watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; document.getElementById('btn-gps').innerHTML='<i class="fa-solid fa-location-dot"></i>&nbsp;Activar GPS'; }
     showStatus('🧹 Todo eliminado','#d9534f');
   };
+	// =====================================================
+// REST MULTI-CAPA (NO INTERFIERE CON MIDAGRI)
+// =====================================================
+
+// Listar capas
+document.getElementById('btn-rest-list').onclick = async () => {
+  const url = document.getElementById('rest-url').value.trim();
+  if (!url) return alert('Ingrese URL REST');
+
+  try {
+    const r = await fetch(url + '?f=pjson');
+    const j = await r.json();
+
+    const sel = document.getElementById('rest-layer-select');
+    sel.innerHTML = '<option value="">— Elegir Capa —</option>';
+
+    (j.layers || []).forEach(l => {
+      const opt = document.createElement('option');
+      opt.value = l.id;
+      opt.textContent = `${l.id} - ${l.name}`;
+      sel.appendChild(opt);
+    });
+
+    showStatus('✅ Capas REST cargadas');
+  } catch (e) {
+    console.error(e);
+    showStatus('❌ Error al listar capas REST', '#d9534f');
+  }
+};
+
+// Intersección REST
+document.getElementById('btn-rest-intersect').onclick = async () => {
+  if (!inputPolygonFeature) {
+    alert('No hay polígono activo');
+    return;
+  }
+
+  const base = document.getElementById('rest-url').value.trim();
+  const layerId = document.getElementById('rest-layer-select').value;
+
+  if (!base || layerId === '') {
+    alert('Seleccione una capa');
+    return;
+  }
+
+  restIntersectLayer.clearLayers();
+  restIntersectFeatures = [];
+  document.getElementById('tabla-inter').innerHTML = 'Consultando servicio REST...';
+
+  try {
+    const esriGeom = geojsonToEsriPolygon(inputPolygonFeature);
+
+if (!esriGeom) {
+  alert('No se pudo convertir el polígono');
+  return;
+}
+
+const geom = JSON.stringify(esriGeom);
+
+  const queryUrl =
+  `${base}/${layerId}/query` +
+  `?geometry=${encodeURIComponent(geom)}` +
+  `&geometryType=esriGeometryPolygon` +
+  `&inSR=4326` +
+  `&spatialRel=esriSpatialRelIntersects` +
+  `&outFields=*` +
+  `&returnGeometry=true` +
+  `&outSR=4326` +
+  `&f=geojson`;
+
+    const r = await fetch(queryUrl);
+    const gj = await r.json();
+
+    if (!gj.features || gj.features.length === 0) {
+      document.getElementById('tabla-inter').innerHTML =
+        '<div class="small">No hay intersecciones.</div>';
+      showStatus('❌ Sin intersecciones REST', '#d9534f');
+      return;
+    }
+
+    restIntersectFeatures = gj.features;
+
+    L.geoJSON(gj, {
+      style: { color: '#ff7f0e', weight: 2, fillOpacity: 0.25 }
+    }).addTo(restIntersectLayer);
+
+    map.fitBounds(restIntersectLayer.getBounds().pad(0.15));
+
+    renderTable(gj.features); // usa TU tabla existente
+    showStatus(`✅ ${gj.features.length} elementos REST intersectados`);
+  } catch (e) {
+    console.error(e);
+    showStatus('❌ Error en consulta REST', '#d9534f');
+  }
+};
+// =====================================================
+// Convertir GeoJSON Polygon → ESRI JSON (ArcGIS REST)
+// =====================================================
+function geojsonToEsriPolygon(feature) {
+  if (!feature || !feature.geometry) return null;
+
+  if (feature.geometry.type !== 'Polygon') {
+    alert('La geometría no es un polígono');
+    return null;
+  }
+
+  return {
+    rings: feature.geometry.coordinates.map(ring =>
+      ring.map(coord => [coord[0], coord[1]]) // lon, lat
+    ),
+    spatialReference: { wkid: 4326 }
+  };
+}
 
   // ---------- End ----------
   </script>
 </body>
 </html>
-
